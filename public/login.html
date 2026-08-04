@@ -21,36 +21,17 @@
   }
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; background: var(--surface); color: var(--ink); font-family: var(--sans); font-size: 14px; }
-
   body { display: flex; align-items: center; justify-content: center; }
 
   .card {
-    background: var(--surface-raised);
-    border: 1px solid var(--rule-strong);
-    border-radius: var(--radius-3);
-    padding: 40px 36px;
-    width: 100%;
-    max-width: 400px;
+    background: var(--surface-raised); border: 1px solid var(--rule-strong);
+    border-radius: var(--radius-3); padding: 40px 36px; width: 100%; max-width: 400px;
   }
-
   .logo {
-    font-family: var(--mono);
-    font-size: 11px;
-    letter-spacing: 0.12em;
-    color: var(--accent);
-    text-transform: uppercase;
-    margin-bottom: 6px;
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em;
+    color: var(--accent); text-transform: uppercase; margin-bottom: 6px;
   }
   h1 { font-size: 20px; font-weight: 600; color: var(--ink-strong); margin-bottom: 28px; }
-
-  .tabs { display: flex; border-bottom: 1px solid var(--rule); margin-bottom: 24px; }
-  .tab {
-    background: none; border: none; padding: 8px 0; margin-right: 24px;
-    font-family: var(--sans); font-size: 13px; font-weight: 500;
-    color: var(--ink-muted); cursor: pointer;
-    border-bottom: 2px solid transparent; margin-bottom: -1px;
-  }
-  .tab.active { color: var(--accent-ink); border-bottom-color: var(--accent); }
 
   label { display: block; font-size: 12px; font-weight: 500; color: var(--ink-muted); margin-bottom: 5px; }
   .field { margin-bottom: 16px; }
@@ -58,8 +39,7 @@
     width: 100%; padding: 9px 11px;
     background: var(--surface-sunken); border: 1px solid var(--rule-strong);
     border-radius: var(--radius-2); font-family: var(--sans); font-size: 13px;
-    color: var(--ink); outline: none;
-    transition: border-color 150ms;
+    color: var(--ink); outline: none; transition: border-color 150ms;
   }
   input:focus { border-color: var(--accent); background: var(--surface-raised); }
 
@@ -71,6 +51,12 @@
   }
   .btn-primary:hover { background: var(--accent-ink); }
   .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .forgot-link {
+    display: block; margin-top: 14px; text-align: center;
+    font-size: 12px; color: var(--ink-muted); text-decoration: none;
+  }
+  .forgot-link:hover { color: var(--accent-ink); }
 
   .error-msg {
     background: var(--error-wash); border: 1px solid #f5c6c3;
@@ -84,11 +70,6 @@
   <div class="logo">Stok Building Intelligence</div>
   <h1>CIBD Editor</h1>
 
-  <div class="tabs">
-    <button class="tab active" id="tabLogin" onclick="showTab('login')">Sign in</button>
-    <button class="tab" id="tabRegister" onclick="showTab('register')">Create account</button>
-  </div>
-
   <form id="loginForm">
     <div class="field">
       <label for="loginEmail">Email</label>
@@ -101,29 +82,10 @@
     <button type="submit" class="btn-primary" id="loginBtn">Sign in</button>
     <div class="error-msg" id="loginError"></div>
   </form>
-
-  <form id="registerForm" style="display:none">
-    <div class="field">
-      <label for="regEmail">Email</label>
-      <input type="email" id="regEmail" autocomplete="email" required placeholder="you@stok.com">
-    </div>
-    <div class="field">
-      <label for="regPassword">Password <span style="font-weight:400;color:var(--ink-faint)">(min 8 characters)</span></label>
-      <input type="password" id="regPassword" autocomplete="new-password" required minlength="8">
-    </div>
-    <button type="submit" class="btn-primary" id="registerBtn">Create account</button>
-    <div class="error-msg" id="registerError"></div>
-  </form>
+  <a class="forgot-link" href="/forgot-password.html">Forgot your password?</a>
 </div>
 
 <script>
-function showTab(tab) {
-  document.getElementById('tabLogin').classList.toggle('active', tab === 'login');
-  document.getElementById('tabRegister').classList.toggle('active', tab === 'register');
-  document.getElementById('loginForm').style.display = tab === 'login' ? '' : 'none';
-  document.getElementById('registerForm').style.display = tab === 'register' ? '' : 'none';
-}
-
 document.getElementById('loginForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const btn = document.getElementById('loginBtn');
@@ -146,29 +108,6 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
   }
 });
 
-document.getElementById('registerForm').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const btn = document.getElementById('registerBtn');
-  const err = document.getElementById('registerError');
-  btn.disabled = true; btn.textContent = 'Creating account…'; err.style.display = 'none';
-  try {
-    const r = await fetch('/api/auth/register', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email: document.getElementById('regEmail').value,
-        password: document.getElementById('regPassword').value,
-      }),
-    });
-    if (!r.ok) { const d = await r.json(); throw new Error(d.error || 'Registration failed'); }
-    window.location.href = '/projects.html';
-  } catch (ex) {
-    err.textContent = ex.message; err.style.display = 'block';
-    btn.disabled = false; btn.textContent = 'Create account';
-  }
-});
-
-// Redirect if already logged in
 fetch('/api/auth/me').then(r => { if (r.ok) window.location.href = '/projects.html'; });
 </script>
 </body>
