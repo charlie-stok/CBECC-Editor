@@ -244,5 +244,61 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
   renderProjects();
 })();
 </script>
+
+<style>
+#ver-badge {
+  position: fixed; bottom: 12px; left: 12px; z-index: 900;
+  font-family: var(--mono); font-size: 10px;
+  color: var(--ink-faint, #9CA1A8);
+  background: var(--surface-raised, #fff); border: 1px solid var(--rule-strong, #D2CFC6);
+  border-radius: 4px; padding: 3px 8px; cursor: pointer; user-select: none;
+  transition: color 150ms, border-color 150ms;
+}
+#ver-badge:hover { color: var(--accent, #4B8A89); border-color: var(--accent, #4B8A89); }
+#ver-panel {
+  position: fixed; bottom: 38px; left: 12px; z-index: 901;
+  background: var(--surface-raised, #fff); border: 1px solid var(--rule-strong, #D2CFC6);
+  border-radius: 8px; padding: 16px 18px; width: 288px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.10);
+  font-family: var(--sans); font-size: 12px; color: var(--ink, #3B404A);
+  display: none;
+}
+#ver-panel .vp-title { font-size: 13px; font-weight: 600; color: var(--ink-strong, #2A2E35); margin-bottom: 14px; }
+.vp-entry { margin-bottom: 12px; }
+.vp-entry:last-child { margin-bottom: 0; }
+.vp-ver { font-family: var(--mono); font-size: 11px; font-weight: 500; color: var(--accent, #4B8A89); }
+.vp-date { font-family: var(--mono); font-size: 10px; color: var(--ink-faint, #9CA1A8); margin-left: 8px; }
+.vp-entry ul { margin: 5px 0 0; padding-left: 16px; color: var(--ink-muted, #6E737B); line-height: 1.65; }
+</style>
+
+<div id="ver-badge">v1.1.0</div>
+<div id="ver-panel">
+  <div class="vp-title">Changelog</div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.1.0</span><span class="vp-date">2026-08-04</span>
+    <ul><li>Version badge and changelog display</li></ul>
+  </div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.0.0</span><span class="vp-date">2026-08-04</span>
+    <ul>
+      <li>Multi-user deployment on Railway</li>
+      <li>Login / logout with JWT sessions</li>
+      <li>Project upload, open, save, rename, delete</li>
+      <li>Admin panel — user management</li>
+      <li>Forgot / reset password flow</li>
+    </ul>
+  </div>
+</div>
+<script>
+(function () {
+  var badge = document.getElementById('ver-badge');
+  var panel = document.getElementById('ver-panel');
+  badge.addEventListener('click', function (e) {
+    e.stopPropagation();
+    panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+  });
+  document.addEventListener('click', function () { panel.style.display = 'none'; });
+})();
+</script>
 </body>
 </html>
