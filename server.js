@@ -97,6 +97,9 @@ function setAuthCookie(res, payload) {
   });
 }
 
+// --- Health ---
+app.get('/health', (req, res) => res.json({ ok: true }));
+
 // --- Page routes ---
 app.get('/', (req, res) => res.redirect('/projects.html'));
 app.get('/editor', (req, res) => res.sendFile(path.join(__dirname, 'CIBD_editor.html')));
