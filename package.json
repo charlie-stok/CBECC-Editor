@@ -1,0 +1,21 @@
+{
+  "name": "cibd-editor",
+  "version": "1.0.0",
+  "description": "Stok CBECC .cibd25 project file editor",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node run_full.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.7",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "jsdom": "^29.1.1",
+    "pg": "^8.13.3"
+  }
+}

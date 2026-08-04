@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stok | CIBD Editor — Projects</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --surface: #FAF9F6; --surface-raised: #FFFFFF; --surface-sunken: #F2F1EC;
+    --rule: #E6E3DC; --rule-strong: #D2CFC6;
+    --ink-strong: #2A2E35; --ink: #3B404A; --ink-muted: #6E737B; --ink-faint: #9CA1A8;
+    --accent: #4B8A89; --accent-strong: #356C6A; --accent-ink: #2C5D5B;
+    --accent-wash: #EAF2F1;
+    --error: #C0392B; --error-wash: #FDF2F0;
+    --radius-2: 4px; --radius-3: 8px; --radius-4: 12px;
+    --sans: 'Inter', system-ui, sans-serif;
+    --mono: 'IBM Plex Mono', ui-monospace, Consolas, monospace;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: var(--surface); color: var(--ink); font-family: var(--sans); font-size: 13px; }
+
+  /* Top bar */
+  #topbar {
+    display: flex; align-items: center; gap: 14px; padding: 10px 24px;
+    background: var(--surface-raised); border-bottom: 1px solid var(--rule-strong);
+  }
+  .logo { font-family: var(--mono); font-size: 12px; letter-spacing: 0.06em; color: var(--accent); }
+  .spacer { flex: 1; }
+  #userEmail { font-size: 12px; color: var(--ink-muted); }
+  .btn {
+    background: var(--surface-sunken); border: 1px solid var(--rule-strong); color: var(--ink);
+    padding: 6px 12px; border-radius: var(--radius-2); font-size: 12px; cursor: pointer;
+    font-family: var(--sans); transition: border-color 150ms, background 150ms;
+  }
+  .btn:hover { border-color: var(--accent); background: var(--accent-wash); }
+  .btn.primary { background: var(--accent-strong); border-color: var(--accent-strong); color: #fff; }
+  .btn.primary:hover { background: var(--accent-ink); border-color: var(--accent-ink); }
+  .btn.danger { color: var(--error); }
+  .btn.danger:hover { border-color: var(--error); background: var(--error-wash); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Content */
+  #content { max-width: 960px; margin: 0 auto; padding: 32px 24px; }
+  #content h2 { font-size: 18px; font-weight: 600; color: var(--ink-strong); margin-bottom: 20px; }
+
+  /* Upload zone */
+  #uploadZone {
+    border: 2px dashed var(--rule-strong); border-radius: var(--radius-3);
+    padding: 28px 24px; text-align: center; margin-bottom: 32px;
+    color: var(--ink-muted); transition: border-color 150ms, background 150ms;
+    cursor: pointer;
+  }
+  #uploadZone:hover, #uploadZone.dragover {
+    border-color: var(--accent); background: var(--accent-wash); color: var(--accent-ink);
+  }
+  #uploadZone .label { font-size: 13px; font-weight: 500; margin-bottom: 4px; }
+  #uploadZone .hint { font-size: 11px; }
+  #fileInput { display: none; }
+
+  /* Project grid */
+  #projectGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+
+  .project-card {
+    background: var(--surface-raised); border: 1px solid var(--rule);
+    border-radius: var(--radius-4); padding: 18px 20px;
+    display: flex; flex-direction: column; gap: 10px;
+    transition: border-color 150ms, box-shadow 150ms;
+  }
+  .project-card:hover { border-color: var(--accent); box-shadow: 0 2px 8px rgba(75,138,137,0.08); }
+
+  .card-name {
+    font-size: 14px; font-weight: 600; color: var(--ink-strong);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .card-filename {
+    font-family: var(--mono); font-size: 11px; color: var(--ink-muted);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .card-date { font-size: 11px; color: var(--ink-faint); }
+  .card-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+
+  .rename-input {
+    font-family: var(--sans); font-size: 13px; font-weight: 600;
+    color: var(--ink-strong); background: var(--surface-sunken);
+    border: 1px solid var(--accent); border-radius: var(--radius-2);
+    padding: 3px 7px; width: 100%; outline: none;
+  }
+
+  #emptyState { color: var(--ink-muted); font-size: 13px; padding: 8px 0; }
+
+  .upload-progress {
+    background: var(--accent-wash); border: 1px solid var(--accent);
+    border-radius: var(--radius-2); padding: 8px 12px;
+    font-size: 12px; color: var(--accent-ink); display: none; margin-bottom: 12px;
+  }
+  .error-banner {
+    background: var(--error-wash); border: 1px solid #f5c6c3;
+    border-radius: var(--radius-2); padding: 9px 12px;
+    color: var(--error); font-size: 12px; margin-bottom: 16px; display: none;
+  }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="logo">CBECC EDITOR</div>
+  <div class="spacer"></div>
+  <span id="userEmail"></span>
+  <button class="btn" id="logoutBtn">Sign out</button>
+</div>
+
+<div id="content">
+  <h2>Projects</h2>
+
+  <div id="uploadZone" onclick="document.getElementById('fileInput').click()">
+    <div class="label">Upload a .cibd25 file</div>
+    <div class="hint">Click or drag a file here to create a new project</div>
+  </div>
+  <input type="file" id="fileInput" accept=".cibd25,.cibd22,.cibd28,.ribd25,.ribd22,.ribd28">
+
+  <div class="upload-progress" id="uploadProgress">Uploading…</div>
+  <div class="error-banner" id="errorBanner"></div>
+
+  <div id="projectGrid"></div>
+  <div id="emptyState" style="display:none">No projects yet. Upload a .cibd25 file to get started.</div>
+</div>
+
+<script>
+let projects = [];
+
+function showError(msg) {
+  const el = document.getElementById('errorBanner');
+  el.textContent = msg;
+  el.style.display = 'block';
+  setTimeout(() => { el.style.display = 'none'; }, 6000);
+}
+
+function fmtDate(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+       + ' ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+}
+
+function renderProjects() {
+  const grid = document.getElementById('projectGrid');
+  const empty = document.getElementById('emptyState');
+  if (!projects.length) { grid.innerHTML = ''; empty.style.display = ''; return; }
+  empty.style.display = 'none';
+  grid.innerHTML = '';
+  for (const p of projects) {
+    const card = document.createElement('div');
+    card.className = 'project-card';
+    card.dataset.id = p.id;
+    card.innerHTML = `
+      <div class="card-name" title="${escHtml(p.name)}">${escHtml(p.name)}</div>
+      <div class="card-filename" title="${escHtml(p.originalFilename)}">${escHtml(p.originalFilename)}</div>
+      <div class="card-date">Saved ${fmtDate(p.updatedAt)}</div>
+      <div class="card-actions">
+        <button class="btn primary" onclick="openProject(${p.id})">Open</button>
+        <a class="btn" href="/api/projects/${p.id}/file" download="${escHtml(p.originalFilename)}">Download</a>
+        <button class="btn" onclick="startRename(${p.id})">Rename</button>
+        <button class="btn danger" onclick="deleteProject(${p.id})">Delete</button>
+      </div>`;
+    grid.appendChild(card);
+  }
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function openProject(id) { window.location.href = `/editor?project=${id}`; }
+
+async function deleteProject(id) {
+  const p = projects.find(x => x.id === id);
+  if (!confirm(`Delete "${p?.name || id}"? This cannot be undone.`)) return;
+  try {
+    const r = await fetch(`/api/projects/${id}`, { method: 'DELETE' });
+    if (!r.ok) throw new Error((await r.json()).error);
+    projects = projects.filter(x => x.id !== id);
+    renderProjects();
+  } catch (err) { showError('Delete failed: ' + err.message); }
+}
+
+function startRename(id) {
+  const p = projects.find(x => x.id === id);
+  const card = document.querySelector(`.project-card[data-id="${id}"]`);
+  const nameEl = card.querySelector('.card-name');
+  const input = document.createElement('input');
+  input.className = 'rename-input';
+  input.value = p.name;
+  nameEl.replaceWith(input);
+  input.focus();
+  input.select();
+  async function commit() {
+    const newName = input.value.trim();
+    if (!newName || newName === p.name) { renderProjects(); return; }
+    try {
+      const r = await fetch(`/api/projects/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newName }),
+      });
+      if (!r.ok) throw new Error((await r.json()).error);
+      p.name = newName;
+      renderProjects();
+    } catch (err) { showError('Rename failed: ' + err.message); renderProjects(); }
+  }
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    if (e.key === 'Escape') { renderProjects(); }
+  });
+}
+
+async function uploadFile(file) {
+  const prog = document.getElementById('uploadProgress');
+  prog.style.display = 'block';
+  try {
+    const content = await file.text();
+    const r = await fetch('/api/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: file.name, originalFilename: file.name, content }),
+    });
+    if (!r.ok) { const d = await r.json(); throw new Error(d.error || 'Upload failed'); }
+    const proj = await r.json();
+    window.location.href = `/editor?project=${proj.id}`;
+  } catch (err) {
+    prog.style.display = 'none';
+    showError('Upload failed: ' + err.message);
+  }
+}
+
+// Drag and drop
+const zone = document.getElementById('uploadZone');
+zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+zone.addEventListener('drop', e => {
+  e.preventDefault(); zone.classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file) uploadFile(file);
+});
+document.getElementById('fileInput').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (file) uploadFile(file);
+});
+
+document.getElementById('logoutBtn').addEventListener('click', async () => {
+  await fetch('/api/auth/logout', { method: 'POST' });
+  window.location.href = '/login.html';
+});
+
+// Init
+(async function () {
+  const meRes = await fetch('/api/auth/me');
+  if (!meRes.ok) { window.location.href = '/login.html'; return; }
+  const me = await meRes.json();
+  document.getElementById('userEmail').textContent = me.email;
+
+  const projRes = await fetch('/api/projects');
+  if (!projRes.ok) { showError('Failed to load projects'); return; }
+  projects = await projRes.json();
+  renderProjects();
+})();
+</script>
+</body>
+</html>

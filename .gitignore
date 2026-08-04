@@ -1,0 +1,8 @@
+node_modules/
+.env
+extracted.js
+_tmp_check.js
+*.cibd25
+*.cibd22
+*.cibd28
+*.ribd25
