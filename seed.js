@@ -4,7 +4,9 @@
 // Requires DATABASE_URL to be set (or a .env file).
 
 'use strict';
-require('dotenv').config({ path: '.env' });
+if (process.env.NODE_ENV !== 'production') {
+  try { require('dotenv').config({ path: '.env' }); } catch (_) {}
+}
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 
