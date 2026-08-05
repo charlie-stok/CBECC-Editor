@@ -389,6 +389,7 @@
 <div id="app">
   <div id="topbar">
     <div class="title">CBECC .cibd25 EDITOR</div>
+    <a class="btn" id="projectsLink" href="/projects.html" style="display:none">← Projects</a>
     <div class="filename" id="filenameLabel">no file loaded</div>
     <button class="btn primary" id="loadBtn">Open .cibd25 file</button>
     <input type="file" id="fileInput" accept=".cibd25,.cibd22,.cibd28,.ribd25,.ribd22,.ribd28,.txt">
@@ -602,7 +603,9 @@ const detailEl = document.getElementById('detail');
 const statusLeft = document.getElementById('statusLeft');
 const statusRight = document.getElementById('statusRight');
 const saveBtn = document.getElementById('saveBtn');
+const projectsLink = document.getElementById('projectsLink');
 if (!IS_SERVER) saveBtn.style.display = 'none';
+if (IS_SERVER) projectsLink.style.display = '';
 
 function loadDocFromText(text, filename) {
   try {
@@ -6644,9 +6647,13 @@ renderStepDetail(WORKFLOW_STEPS[0]);
 .vp-entry ul { margin: 5px 0 0; padding-left: 16px; color: var(--ink-muted, #6E737B); line-height: 1.65; }
 </style>
 
-<div id="ver-badge">v1.1.0</div>
+<div id="ver-badge">v1.2.0</div>
 <div id="ver-panel">
   <div class="vp-title">Changelog</div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.2.0</span><span class="vp-date">2026-08-04</span>
+    <ul><li>← Projects link in editor topbar</li></ul>
+  </div>
   <div class="vp-entry">
     <span class="vp-ver">v1.1.0</span><span class="vp-date">2026-08-04</span>
     <ul><li>Version badge and changelog display</li></ul>
