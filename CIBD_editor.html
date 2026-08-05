@@ -5139,6 +5139,17 @@ function wsEquipPump(eq){
   const next = doc.records[i + 1];
   return (next && next.type === "Pump") ? next : null;
 }
+function addCompanionPump(eq){
+  const ownerLoop = doc.records.filter(r => r.type === "FluidSys").find(l => getLoopChildren(doc, l).includes(eq));
+  const loopType = ownerLoop ? ownerLoop.attrs.Type : "";
+  const pump = makeRecord("Pump", eq.name + " Pump");
+  setPlainAttr(pump, "SpdCtrl", loopType === "CondenserWater" ? "ConstantSpeed" : "VariableSpeed");
+  setPlainAttr(pump, "OperCtrl", "OnDemand");
+  setPlainAttr(pump, "FlowMin", 0);
+  dirtyRecords.add(pump);
+  doc.records.splice(doc.records.indexOf(eq) + 1, 0, pump);
+  return pump;
+}
 function wsLoopWiringStatus(loop){
   const {sup} = wsSegsOf(loop);
   const wc = wsGetWaterCoils();
@@ -5275,6 +5286,7 @@ function renderCreateWaterSideForm(container){
   }
 
   // ── Drop target wiring ─────────────────────────────────────────
+  const LOOP_ALLOWED_EQUIP = {ChilledWater:["Chlr"], HotWater:["Blr","HtPump"], CondenserWater:["HtRej"], ServiceHotWater:["WtrHtr"]};
   function wireEquipDrop(el, targetLoop){
     el.addEventListener('dragenter', e => { e.preventDefault(); el.style.outline="2px dashed var(--accent)"; el.style.outlineOffset="-2px"; });
     el.addEventListener('dragover',  e => e.preventDefault());
@@ -5282,6 +5294,8 @@ function renderCreateWaterSideForm(container){
     el.addEventListener('drop', e => {
       e.preventDefault(); el.style.outline=""; el.style.outlineOffset="";
       if(!dragEquip || dragEquip.fromLoop === targetLoop) return;
+      const allowed = LOOP_ALLOWED_EQUIP[targetLoop.attrs.Type] || [];
+      if(!allowed.includes(dragEquip.eq.type)) return;
       const idx = doc.records.indexOf(dragEquip.eq);
       if(idx !== -1) doc.records.splice(idx, 1);
       const targetCh = getLoopChildren(doc, targetLoop);
@@ -5338,6 +5352,15 @@ function renderCreateWaterSideForm(container){
       if(rejN>0){ const rs=document.createElement('span'); rs.style.cssText="font-size:10px;color:var(--text-dim);"; rs.textContent=`· ${rejN} tower${rejN!==1?"s":""}`; hdr.appendChild(rs); }
     } else if(!isSHW && total>0){
       const cs=document.createElement('span'); cs.style.cssText=`font-size:10px;color:${wired===total?"var(--color-accent-ink)":"var(--edited)"};`; cs.textContent=`${wired}/${total} coils`; hdr.appendChild(cs);
+    }
+    if(!isSHW){
+      const pMode = getLoopPumpingMode(ch);
+      const modeEl = document.createElement('span');
+      modeEl.style.cssText = "font-size:9px;color:var(--text-dim);background:var(--panel2);border:1px solid var(--border);padding:1px 5px;border-radius:2px;cursor:pointer;white-space:nowrap;flex-shrink:0;";
+      modeEl.textContent = pMode === "PrimarySecondary" ? "P+S" : "Primary";
+      modeEl.title = "Pumping mode — click to configure";
+      modeEl.addEventListener('click', e => { e.stopPropagation(); openModal(box => buildLoopModal(box, loop)); });
+      hdr.appendChild(modeEl);
     }
     const gearBtn = document.createElement('span');
     gearBtn.style.cssText = "font-size:10px;color:var(--text-dim);font-style:italic;cursor:pointer;padding:0 2px;";
@@ -5562,10 +5585,12 @@ function renderCreateWaterSideForm(container){
         pg.appendChild(opSel);
         ps.appendChild(pg);
       } else {
-        const nm = document.createElement('div');
-        nm.style.cssText = "font-size:11px;color:var(--edited);";
-        nm.textContent = "No companion pump found — re-add this equipment to create one.";
-        ps.appendChild(nm);
+        const addPumpBtn = document.createElement('button');
+        addPumpBtn.className = 'btn primary';
+        addPumpBtn.textContent = '+ Add Pump';
+        addPumpBtn.style.cssText = 'font-size:11px;padding:3px 10px;';
+        addPumpBtn.addEventListener('click', () => { addCompanionPump(eq); updateStatus(); closeModal(); openModal(b => buildEquipModal(b, eq)); });
+        ps.appendChild(addPumpBtn);
       }
       c.appendChild(ps);
     }
@@ -6668,9 +6693,17 @@ renderStepDetail(WORKFLOW_STEPS[0]);
 .vp-entry ul { margin: 5px 0 0; padding-left: 16px; color: var(--ink-muted, #6E737B); line-height: 1.65; }
 </style>
 
-<div id="ver-badge">v1.8.0</div>
+<div id="ver-badge">v1.9.0</div>
 <div id="ver-panel">
   <div class="vp-title">Changelog</div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.9.0</span><span class="vp-date">2026-08-05</span>
+    <ul>
+      <li>Equipment modal: "+ Add Pump" button when no companion pump exists (no need to re-add equipment)</li>
+      <li>Drag-and-drop: equipment can only be dropped on a compatible loop type (chillers → CHW only, boilers/HPs → HHW only, etc.)</li>
+      <li>Loop card header now shows a clickable "Primary" / "P+S" badge to surface and access pumping mode configuration</li>
+    </ul>
+  </div>
   <div class="vp-entry">
     <span class="vp-ver">v1.8.0</span><span class="vp-date">2026-08-05</span>
     <ul>
