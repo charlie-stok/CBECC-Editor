@@ -4310,15 +4310,18 @@ function createFluidLoop(doc, loopType, loopName, options){
     else doc.records.push(fluidSys, ...children);
   }
 
-  // Auto-wire coils of the matching type to this loop
-  if(loopType === "HotWater" || loopType === "ChilledWater"){
-    wireCoilsToLoop(doc, loopType, supSegName, retSegName);
-  }
-  // When creating a CW loop, wire condenser side on water-cooled Chlr records and WSHP coils
-  if(loopType === "CondenserWater"){
-    const chWLoop = doc.records.find(r => r.type === "FluidSys" && r.attrs.Type === "ChilledWater");
-    if(chWLoop) wireChlrCondenserToLoop(doc, chWLoop, supSegName, retSegName);
-    wireCoilsToLoop(doc, "CondenserWater", supSegName, retSegName);
+  // Auto-wire demands only when this is the FIRST loop of its type.
+  // A second+ loop leaves existing wiring alone — demand equipment stays on its current loop.
+  const isFirstOfType = doc.records.filter(r => r.type === "FluidSys" && r.attrs.Type === loopType && r !== fluidSys).length === 0;
+  if(isFirstOfType){
+    if(loopType === "HotWater" || loopType === "ChilledWater"){
+      wireCoilsToLoop(doc, loopType, supSegName, retSegName);
+    }
+    if(loopType === "CondenserWater"){
+      const chWLoop = doc.records.find(r => r.type === "FluidSys" && r.attrs.Type === "ChilledWater");
+      if(chWLoop) wireChlrCondenserToLoop(doc, chWLoop, supSegName, retSegName);
+      wireCoilsToLoop(doc, "CondenserWater", supSegName, retSegName);
+    }
   }
 
   return fluidSys;
@@ -5277,25 +5280,45 @@ function renderCreateWaterSideForm(container){
     const card = document.createElement('div');
     card.style.cssText = "border:1px solid var(--border);border-left:3px solid "+dropColor+";border-radius:var(--radius-2);overflow:hidden;flex:1;min-width:180px;";
 
-    // Header — click to open loop config (pumping)
+    // Header — name click = inline rename; gear click = pumping modal
     const hdr = document.createElement('div');
-    hdr.style.cssText = "padding:7px 10px;background:var(--panel2);display:flex;align-items:center;gap:6px;cursor:pointer;min-height:36px;";
-    let demandBadge = "";
+    hdr.style.cssText = "padding:7px 10px;background:var(--panel2);display:flex;align-items:center;gap:6px;min-height:36px;";
+    const iconEl = document.createElement('span');
+    iconEl.style.cssText = "flex-shrink:0;display:inline-flex;align-items:center;";
+    iconEl.innerHTML = wsDropSvg(loopType, 13);
+    hdr.appendChild(iconEl);
+    const nameEl = document.createElement('span');
+    nameEl.style.cssText = "font-family:var(--mono);font-size:12px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:text;";
+    nameEl.textContent = loop.name;
+    nameEl.title = "Click to rename";
+    nameEl.addEventListener('click', e => {
+      e.stopPropagation();
+      const inp = document.createElement('input');
+      inp.type = 'text'; inp.value = loop.name;
+      inp.style.cssText = "font-family:var(--mono);font-size:12px;font-weight:600;flex:1;min-width:0;width:100%;background:transparent;border:none;border-bottom:1px solid var(--accent);outline:none;color:var(--text);padding:0;";
+      nameEl.replaceWith(inp); inp.focus(); inp.select();
+      function commit(){ const n=inp.value.trim(); if(n && n!==loop.name && !doc.records.some(r=>r.type==="FluidSys"&&r.name===n)){ loop.name=n; dirtyRecords.add(loop); updateStatus(); } renderAll(); }
+      inp.addEventListener('keydown', e => { if(e.key==='Enter'){e.preventDefault();commit();} if(e.key==='Escape') renderAll(); });
+      inp.addEventListener('blur', commit);
+    });
+    hdr.appendChild(nameEl);
     if(isCW){
-      const demN = cwDemandEquip.length, rejN = htRejEquip.length;
-      const demColor = demN > 0 ? "var(--color-accent-ink)" : "var(--edited)";
-      demandBadge = `<span style="font-size:10px;color:${demColor};">${demN} demand${demN!==1?"s":""}</span>`
-        + (rejN > 0 ? `<span style="font-size:10px;color:var(--text-dim);">· ${rejN} tower${rejN!==1?"s":""}</span>` : "");
-    } else if(!isSHW && total > 0){
-      demandBadge = `<span style="font-size:10px;color:${wired===total?"var(--color-accent-ink)":"var(--edited)"};">${wired}/${total} coils</span>`;
+      const demN=cwDemandEquip.length, rejN=htRejEquip.length;
+      const ds=document.createElement('span'); ds.style.cssText=`font-size:10px;color:${demN>0?"var(--color-accent-ink)":"var(--edited)"};`; ds.textContent=`${demN} demand${demN!==1?"s":""}`; hdr.appendChild(ds);
+      if(rejN>0){ const rs=document.createElement('span'); rs.style.cssText="font-size:10px;color:var(--text-dim);"; rs.textContent=`· ${rejN} tower${rejN!==1?"s":""}`; hdr.appendChild(rs); }
+    } else if(!isSHW && total>0){
+      const cs=document.createElement('span'); cs.style.cssText=`font-size:10px;color:${wired===total?"var(--color-accent-ink)":"var(--edited)"};`; cs.textContent=`${wired}/${total} coils`; hdr.appendChild(cs);
     }
-    hdr.innerHTML = wsDropSvg(loopType, 13) +
-      `<span style="font-family:var(--mono);font-size:12px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${loop.name}</span>` +
-      demandBadge +
-      `<span style="font-size:10px;color:var(--text-dim);font-style:italic;" title="Click to edit pumping">⚙</span>` +
-      `<button class="ws-del-loop" style="border:none;background:none;cursor:pointer;color:var(--text-dim);font-size:14px;padding:0 0 0 4px;line-height:1;" title="Delete loop">×</button>`;
-    hdr.querySelector('.ws-del-loop').addEventListener('click', e => { e.stopPropagation(); deleteFluidLoop(doc, loop); updateStatus(); renderAll(); });
-    hdr.addEventListener('click', e => { if(e.target.classList.contains('ws-del-loop')) return; openModal(box => buildLoopModal(box, loop)); });
+    const gearBtn = document.createElement('span');
+    gearBtn.style.cssText = "font-size:10px;color:var(--text-dim);font-style:italic;cursor:pointer;padding:0 2px;";
+    gearBtn.title = "Edit pumping"; gearBtn.textContent = "⚙";
+    gearBtn.addEventListener('click', e => { e.stopPropagation(); openModal(box => buildLoopModal(box, loop)); });
+    hdr.appendChild(gearBtn);
+    const delBtn = document.createElement('button');
+    delBtn.style.cssText = "border:none;background:none;cursor:pointer;color:var(--text-dim);font-size:14px;padding:0 0 0 4px;line-height:1;";
+    delBtn.title = "Delete loop"; delBtn.textContent = "×";
+    delBtn.addEventListener('click', e => { e.stopPropagation(); deleteFluidLoop(doc, loop); updateStatus(); renderAll(); });
+    hdr.appendChild(delBtn);
     card.appendChild(hdr);
 
     if(isCW){
@@ -6580,9 +6603,16 @@ renderStepDetail(WORKFLOW_STEPS[0]);
 .vp-entry ul { margin: 5px 0 0; padding-left: 16px; color: var(--ink-muted, #6E737B); line-height: 1.65; }
 </style>
 
-<div id="ver-badge">v1.6.0</div>
+<div id="ver-badge">v1.7.0</div>
 <div id="ver-panel">
   <div class="vp-title">Changelog</div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.7.0</span><span class="vp-date">2026-08-05</span>
+    <ul>
+      <li>Loop rename — click any loop name to edit it inline; Enter to confirm, Escape to cancel</li>
+      <li>Adding a second loop of a type no longer re-wires existing demands; only the first loop of a type auto-wires (handles delete-and-recreate)</li>
+    </ul>
+  </div>
   <div class="vp-entry">
     <span class="vp-ver">v1.6.0</span><span class="vp-date">2026-08-05</span>
     <ul>
