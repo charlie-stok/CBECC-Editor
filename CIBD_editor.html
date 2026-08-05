@@ -5380,14 +5380,14 @@ function renderCreateWaterSideForm(container){
       function makeDemandsChip(eq){ const fromLoop=doc.records.filter(r=>r.type==="FluidSys").find(l=>getLoopChildren(doc,l).includes(eq)); let sum=""; if(eq.type==="Chlr") sum=(eq.attrs.Type||"Scroll")+" · water-cooled"; else if(eq.type==="HtPump") sum="Water-source HP"; const chip=document.createElement('div'); chip.style.cssText="display:inline-flex;flex-direction:column;gap:0;background:var(--panel2);border:1px solid var(--border);border-radius:var(--radius-2);padding:4px 8px;font-family:var(--mono);font-size:11px;cursor:pointer;"; chip.innerHTML=`<span style="font-weight:600;">${eq.name}</span><span style="font-size:10px;color:var(--text-dim);">${sum}</span>`+(fromLoop?`<span style="font-size:9px;color:var(--ink-faint);">from ${fromLoop.name}</span>`:""); chip.title="Click to configure this equipment's CW connection"; chip.addEventListener('click',()=>openModal(box=>buildEquipModal(box,eq))); return chip; }
       const twoCol = document.createElement('div');
       twoCol.style.cssText = "display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--border);";
-      const demPanel = makeCwSubPanelEl("Demands — add heat to CW");
-      if(cwDemandEquip.length===0){ const ph=document.createElement('span'); ph.style.cssText="font-size:10px;color:var(--ink-faint);font-style:italic;"; ph.textContent="None — configure a water-cooled chiller or WSHP condenser to this loop"; demPanel.appendChild(ph); }
-      else { const chips=document.createElement('div'); chips.style.cssText="display:flex;flex-wrap:wrap;gap:5px;"; cwDemandEquip.forEach(eq=>chips.appendChild(makeDemandsChip(eq))); demPanel.appendChild(chips); }
       const rejPanel = makeCwSubPanelEl("Heat rejection — remove heat from CW");
-      rejPanel.style.borderLeft = "1px solid var(--border)";
       if(htRejEquip.length===0){ const ph=document.createElement('span'); ph.style.cssText="font-size:10px;color:var(--ink-faint);font-style:italic;"; ph.textContent="No tower — add via button below"; rejPanel.appendChild(ph); }
       else { const chips=document.createElement('div'); chips.style.cssText="display:flex;flex-wrap:wrap;gap:5px;"; htRejEquip.forEach(eq=>chips.appendChild(makeEquipCard(eq,loop))); rejPanel.appendChild(chips); }
-      twoCol.appendChild(demPanel); twoCol.appendChild(rejPanel);
+      const demPanel = makeCwSubPanelEl("Demands — add heat to CW");
+      demPanel.style.borderLeft = "1px solid var(--border)";
+      if(cwDemandEquip.length===0){ const ph=document.createElement('span'); ph.style.cssText="font-size:10px;color:var(--ink-faint);font-style:italic;"; ph.textContent="None — configure a water-cooled chiller or WSHP condenser to this loop"; demPanel.appendChild(ph); }
+      else { const chips=document.createElement('div'); chips.style.cssText="display:flex;flex-wrap:wrap;gap:5px;"; cwDemandEquip.forEach(eq=>chips.appendChild(makeDemandsChip(eq))); demPanel.appendChild(chips); }
+      twoCol.appendChild(rejPanel); twoCol.appendChild(demPanel);
       card.appendChild(twoCol);
       // Footer
       const foot=document.createElement('div'); foot.style.cssText="border-top:1px solid var(--border);padding:5px 8px;display:flex;gap:6px;flex-wrap:wrap;background:var(--panel2);"; const bStyle="font-size:10.5px;padding:2px 8px;"; function addBtn(label,fn){ const b=document.createElement('button'); b.className="btn"; b.style.cssText=bStyle; b.textContent=label; b.addEventListener('click',fn); foot.appendChild(b); }
@@ -5435,7 +5435,7 @@ function renderCreateWaterSideForm(container){
     hdr.innerHTML = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0;"></span><span style="font-family:var(--mono);font-size:10px;letter-spacing:0.07em;text-transform:uppercase;color:var(--ink-faint);">${label}${loops.length>1?" — drag equipment between loops":""}</span><span style="flex:1;height:1px;background:var(--border);margin-left:4px;"></span>`;
     section.appendChild(hdr);
     const row = document.createElement('div');
-    row.style.cssText = "display:flex;gap:10px;flex-wrap:wrap;align-items:stretch;";
+    row.style.cssText = "display:flex;flex-direction:column;gap:10px;";
     loops.forEach(loop => row.appendChild(makeLoopCard(loop, loops)));
     section.appendChild(row);
     return section;
@@ -5820,11 +5820,11 @@ function renderAssignWaterSideForm(container){
           return panel;
         }
 
-        const loadsPanel = makeCwPanel("Loads (add heat to CW)", cwLoadEquip, "CondenserWater", "None — add water-cooled chiller or WSHP.");
         const rejPanel   = makeCwPanel("Heat rejection (remove heat)", cwHtRejEquip, "CondenserWater", "No tower — add in Create Water-Side step.");
-        rejPanel.style.cssText += "border-left:1px solid var(--border);";
-        twoCol.appendChild(loadsPanel);
+        const loadsPanel = makeCwPanel("Loads (add heat to CW)", cwLoadEquip, "CondenserWater", "None — add water-cooled chiller or WSHP.");
+        loadsPanel.style.cssText += "border-left:1px solid var(--border);";
         twoCol.appendChild(rejPanel);
+        twoCol.appendChild(loadsPanel);
         card.appendChild(twoCol);
       } else {
         // CHW / HHW: single SOURCE row
@@ -6693,9 +6693,17 @@ renderStepDetail(WORKFLOW_STEPS[0]);
 .vp-entry ul { margin: 5px 0 0; padding-left: 16px; color: var(--ink-muted, #6E737B); line-height: 1.65; }
 </style>
 
-<div id="ver-badge">v1.9.0</div>
+<div id="ver-badge">v1.10.0</div>
 <div id="ver-panel">
   <div class="vp-title">Changelog</div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.10.0</span><span class="vp-date">2026-08-05</span>
+    <ul>
+      <li>Loop cards now stack vertically instead of side-by-side; same-type loops stay grouped</li>
+      <li>CW loop card: Heat Rejection panel now appears left (first), Demands panel right — tower-first order</li>
+      <li>Wire coils step: same CW panel order fix — Heat Rejection left, Loads right</li>
+    </ul>
+  </div>
   <div class="vp-entry">
     <span class="vp-ver">v1.9.0</span><span class="vp-date">2026-08-05</span>
     <ul>
