@@ -5496,7 +5496,7 @@ function renderCreateWaterSideForm(container){
       c.querySelector('#eq-cndsr').addEventListener('change',()=>{const v=c.querySelector('#eq-cndsr').value;setPlainAttr(eq,"CndsrType",v);dirtyRecords.add(eq);if(v!=="Fluid"){deletePlainAttr(eq,"CndsrFluidSegInRef");deletePlainAttr(eq,"CndsrFluidSegOutRef");}updateStatus();applyCC();});
       c.querySelector('#eq-fuel').addEventListener('change',()=>{setPlainAttr(eq,"FuelSrc",c.querySelector('#eq-fuel').value);dirtyRecords.add(eq);updateStatus();});
       c.querySelector('#eq-cw').addEventListener('change',()=>{const cwl=cwLoops.find(l=>l.name===c.querySelector('#eq-cw').value);if(cwl){const cch=getLoopChildren(doc,cwl);const cs2=cch.find(r=>r.type==="FluidSeg"&&r.attrs.Type==="PrimarySupply");const cr=cch.find(r=>r.type==="FluidSeg"&&r.attrs.Type==="PrimaryReturn");if(cs2)setPlainAttr(eq,"CndsrFluidSegInRef",cs2.name);if(cr)setPlainAttr(eq,"CndsrFluidSegOutRef",cr.name);}else{deletePlainAttr(eq,"CndsrFluidSegInRef");deletePlainAttr(eq,"CndsrFluidSegOutRef");}dirtyRecords.add(eq);updateStatus();});
-      c.querySelector('#createCwBtn').addEventListener('click',()=>{const cwNow=doc.records.filter(r=>r.type==="FluidSys"&&r.attrs.Type==="CondenserWater");createFluidLoop(doc,"CondenserWater",cwNow.length===0?"CW":"CW "+(cwNow.length+1),{});updateStatus();closeModal();renderAll();});
+      c.querySelector('#createCwBtn').addEventListener('click',()=>{const cwNow=doc.records.filter(r=>r.type==="FluidSys"&&r.attrs.Type==="CondenserWater");const newLoop=createFluidLoop(doc,"CondenserWater",cwNow.length===0?"CW":"CW "+(cwNow.length+1),{});wsWireCondEquipToLoop(eq,newLoop);dirtyRecords.add(eq);updateStatus();closeModal();renderAll();});
     } else if(eq.type==="Blr"){
       const isGas=eq.attrs.FuelSrc!=="Electric";
       c.innerHTML=`<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center;max-width:300px;">
@@ -6946,9 +6946,15 @@ renderStepDetail(WORKFLOW_STEPS[0]);
 .vp-entry ul { margin: 5px 0 0; padding-left: 16px; color: var(--ink-muted, #6E737B); line-height: 1.65; }
 </style>
 
-<div id="ver-badge">v1.13.0</div>
+<div id="ver-badge">v1.14.0</div>
 <div id="ver-panel">
   <div class="vp-title">Changelog</div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.14.0</span><span class="vp-date">2026-08-05</span>
+    <ul>
+      <li>"+ New CW" in the chiller modal now auto-wires the chiller's condenser to the newly created CW loop</li>
+    </ul>
+  </div>
   <div class="vp-entry">
     <span class="vp-ver">v1.13.0</span><span class="vp-date">2026-08-05</span>
     <ul>
