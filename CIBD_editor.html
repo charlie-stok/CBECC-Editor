@@ -6036,6 +6036,7 @@ function renderAssignWaterSideForm(container){
     // ── Loop card ────────────────────────────────────────────────────
     function makeLoopCard(loop){
       var loopType = loop.attrs.Type;
+      var isCW = loopType === "CondenserWater";
       var dropColor = loopType === "ChilledWater" ? "#5b9bd5" : loopType === "HotWater" ? "#e05050" : "#38a169";
       var thisSup = wsSegsOf(loop).sup;
       var assignedHere = waterCoils.filter(function(c){
@@ -6056,48 +6057,96 @@ function renderAssignWaterSideForm(container){
         + '<span style="margin-left:auto;font-size:11px;color:'+hdrColor+';">'+assignedHere.length+'/'+totalCompat+' coils</span>';
       card.appendChild(hdr);
 
-      // Source equipment row (read-only info)
-      var sourceEquip = getLoopChildren(doc, loop).filter(function(r){ return ["Chlr","Blr","HtPump","HtRej"].includes(r.type); });
-      if(loopType === "CondenserWater"){
-        // Also add water-cooled chillers / WSHPs that reference this CW loop
-        var ch2 = getLoopChildren(doc, loop);
-        var priSup = ch2.find(function(r){ return r.type==="FluidSeg" && r.attrs.Type==="PrimarySupply"; });
-        var priRet = ch2.find(function(r){ return r.type==="FluidSeg" && r.attrs.Type==="PrimaryReturn"; });
-        var cwNames = new Set([priSup&&priSup.name, priRet&&priRet.name].filter(Boolean));
-        var crossRef = doc.records.filter(function(r){
-          if(r.type==="Chlr")   return cwNames.has(r.attrs.CndsrFluidSegInRef) || cwNames.has(r.attrs.CndsrFluidSegOutRef);
-          if(r.type==="HtPump") return cwNames.has(r.attrs.SrcFluidSegInRef)   || cwNames.has(r.attrs.SrcFluidSegOutRef);
+      // ── CW loop: three separate sections ─────────────────────────
+      if(isCW){
+        var directChildren = getLoopChildren(doc, loop).filter(function(r){ return ["Chlr","Blr","HtPump","HtRej"].includes(r.type); });
+        var htRejEquip = directChildren.filter(function(r){ return r.type === "HtRej"; });
+
+        // Cross-reference water-cooled Chlr + HtPump that point at this loop's segments
+        var cwCh = getLoopChildren(doc, loop);
+        var cwPriSup = cwCh.find(function(r){ return r.type==="FluidSeg" && r.attrs.Type==="PrimarySupply"; });
+        var cwPriRet = cwCh.find(function(r){ return r.type==="FluidSeg" && r.attrs.Type==="PrimaryReturn"; });
+        var cwSegNames = new Set([cwPriSup&&cwPriSup.name, cwPriRet&&cwPriRet.name].filter(Boolean));
+        var heatSrcEquip = doc.records.filter(function(r){
+          if(r.type==="Chlr")   return cwSegNames.has(r.attrs.CndsrFluidSegInRef) || cwSegNames.has(r.attrs.CndsrFluidSegOutRef);
+          if(r.type==="HtPump") return cwSegNames.has(r.attrs.SrcFluidSegInRef)   || cwSegNames.has(r.attrs.SrcFluidSegOutRef);
           return false;
         });
-        var seenEq = new Set(sourceEquip.map(function(e){ return e.name; }));
-        crossRef.forEach(function(r){ if(!seenEq.has(r.name)){ sourceEquip.push(r); seenEq.add(r.name); } });
-      }
-      var srcRow = document.createElement('div');
-      srcRow.style.cssText = "padding:7px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;";
-      var srcLbl = document.createElement('span');
-      srcLbl.style.cssText = "font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--text-dim);flex-shrink:0;min-width:50px;";
-      srcLbl.textContent = loopType === "CondenserWater" ? "Equipment" : "Source";
-      srcRow.appendChild(srcLbl);
-      if(sourceEquip.length === 0){
-        var noEq = document.createElement('span');
-        noEq.style.cssText = "font-size:11px;color:var(--edited);";
-        noEq.textContent = "No equipment — add in Create Water-Side step.";
-        srcRow.appendChild(noEq);
-      } else {
-        sourceEquip.forEach(function(eq){
+
+        function makeInfoChip(eq){
           var eChip = document.createElement('span');
           eChip.style.cssText = "display:inline-flex;align-items:center;gap:4px;background:var(--panel2);border:1px solid var(--border);border-radius:var(--radius-1);padding:2px 7px;font-family:var(--mono);font-size:10.5px;";
-          var eType = eq.type==="Chlr"?"Chiller":eq.type==="Blr"?"Boiler":eq.type==="HtRej"?"Tower":"HtPump";
+          var eType = eq.type==="Chlr"?"Chiller":eq.type==="HtRej"?"Tower":"HtPump";
           eChip.textContent = eq.name + " · " + eType;
-          srcRow.appendChild(eChip);
-        });
-      }
-      card.appendChild(srcRow);
+          return eChip;
+        }
+        function makeEquipRow(labelText, equipList, emptyMsg){
+          var row = document.createElement('div');
+          row.style.cssText = "padding:7px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;";
+          var lbl = document.createElement('span');
+          lbl.style.cssText = "font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--text-dim);flex-shrink:0;min-width:80px;";
+          lbl.textContent = labelText;
+          row.appendChild(lbl);
+          if(equipList.length === 0){
+            var none = document.createElement('span');
+            none.style.cssText = "font-size:11px;color:var(--edited);";
+            none.textContent = emptyMsg;
+            row.appendChild(none);
+          } else {
+            equipList.forEach(function(eq){ row.appendChild(makeInfoChip(eq)); });
+          }
+          return row;
+        }
 
-      // Demand coils drop zone
+        card.appendChild(makeEquipRow("Heat rejection", htRejEquip, "No tower — add in Create Water-Side step."));
+
+        // Heat sources: styled like a demand-coils section (label + wrapped chips area)
+        var srcLbl2 = document.createElement('div');
+        srcLbl2.style.cssText = "padding:7px 14px 4px;font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--text-dim);";
+        srcLbl2.textContent = "Heat sources";
+        card.appendChild(srcLbl2);
+        var srcChips = document.createElement('div');
+        srcChips.style.cssText = "padding:0 14px 10px;display:flex;flex-wrap:wrap;gap:6px;min-height:30px;border-bottom:1px solid var(--border);";
+        if(heatSrcEquip.length === 0){
+          var noSrc = document.createElement('div');
+          noSrc.style.cssText = "font-size:11px;color:var(--edited);font-style:italic;padding:4px 0;";
+          noSrc.textContent = "No water-cooled chillers or water-source HPs — add in Create Water-Side step.";
+          srcChips.appendChild(noSrc);
+        } else {
+          heatSrcEquip.forEach(function(eq){ srcChips.appendChild(makeInfoChip(eq)); });
+        }
+        card.appendChild(srcChips);
+
+      } else {
+        // CHW / HHW: single source row ─────────────────────────────
+        var sourceEquip = getLoopChildren(doc, loop).filter(function(r){ return ["Chlr","Blr","HtPump","HtRej"].includes(r.type); });
+        var srcRow = document.createElement('div');
+        srcRow.style.cssText = "padding:7px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;";
+        var srcLbl = document.createElement('span');
+        srcLbl.style.cssText = "font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--text-dim);flex-shrink:0;min-width:50px;";
+        srcLbl.textContent = "Source";
+        srcRow.appendChild(srcLbl);
+        if(sourceEquip.length === 0){
+          var noEq = document.createElement('span');
+          noEq.style.cssText = "font-size:11px;color:var(--edited);";
+          noEq.textContent = "No equipment — add in Create Water-Side step.";
+          srcRow.appendChild(noEq);
+        } else {
+          sourceEquip.forEach(function(eq){
+            var eChip = document.createElement('span');
+            eChip.style.cssText = "display:inline-flex;align-items:center;gap:4px;background:var(--panel2);border:1px solid var(--border);border-radius:var(--radius-1);padding:2px 7px;font-family:var(--mono);font-size:10.5px;";
+            var eType = eq.type==="Chlr"?"Chiller":eq.type==="Blr"?"Boiler":eq.type==="HtRej"?"Tower":"HtPump";
+            eChip.textContent = eq.name + " · " + eType;
+            srcRow.appendChild(eChip);
+          });
+        }
+        card.appendChild(srcRow);
+      }
+
+      // Demand coils drop zone (all loop types)
       var demLbl = document.createElement('div');
       demLbl.style.cssText = "padding:7px 14px 4px;font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--text-dim);";
-      demLbl.textContent = loopType === "CondenserWater" ? "WSHP zone coils" : "Demand coils";
+      demLbl.textContent = isCW ? "WSHP zone coils" : "Demand coils";
       card.appendChild(demLbl);
 
       var dropZone = document.createElement('div');
@@ -6885,9 +6934,16 @@ renderStepDetail(WORKFLOW_STEPS[0]);
 .vp-entry ul { margin: 5px 0 0; padding-left: 16px; color: var(--ink-muted, #6E737B); line-height: 1.65; }
 </style>
 
-<div id="ver-badge">v1.11.0</div>
+<div id="ver-badge">v1.12.0</div>
 <div id="ver-panel">
   <div class="vp-title">Changelog</div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.12.0</span><span class="vp-date">2026-08-05</span>
+    <ul>
+      <li>CW loop card: Heat Rejection (towers) and Heat Sources (water-cooled chillers, water-source HPs) shown as separate labeled sections</li>
+      <li>Heat Sources styled like the demand coils area — label + wrapped chips — clearly distinct from the WSHP zone coils drop zone</li>
+    </ul>
+  </div>
   <div class="vp-entry">
     <span class="vp-ver">v1.11.0</span><span class="vp-date">2026-08-05</span>
     <ul>
