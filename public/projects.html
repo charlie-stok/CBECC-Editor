@@ -88,6 +88,55 @@
     border-radius: var(--radius-2); padding: 9px 12px;
     color: var(--error); font-size: 12px; margin-bottom: 16px; display: none;
   }
+
+  /* Archive section */
+  .archive-section { margin-top: 40px; }
+  .archive-toggle {
+    display: flex; align-items: center; gap: 8px; cursor: pointer;
+    font-size: 13px; font-weight: 500; color: var(--ink-muted);
+    padding: 6px 0; user-select: none; border-top: 1px solid var(--rule); padding-top: 16px;
+  }
+  .archive-toggle:hover { color: var(--ink); }
+  .archive-toggle .chevron { font-size: 10px; transition: transform 150ms; }
+  .archive-toggle.open .chevron { transform: rotate(90deg); }
+  #archiveGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; margin-top: 16px; }
+  .project-card.archived { opacity: 0.7; }
+  .project-card.archived:hover { opacity: 1; }
+
+  /* History modal */
+  #historyModal {
+    position: fixed; inset: 0; z-index: 2000; display: none;
+    align-items: center; justify-content: center;
+  }
+  #historyModal.open { display: flex; }
+  #historyBackdrop { position: absolute; inset: 0; background: rgba(42,46,53,0.45); }
+  #historyPanel {
+    position: relative; z-index: 1; background: var(--surface-raised);
+    border: 1px solid var(--rule-strong); border-radius: var(--radius-4);
+    width: 100%; max-width: 520px; max-height: 80vh; display: flex; flex-direction: column;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+  }
+  .hist-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 18px 20px 14px; border-bottom: 1px solid var(--rule);
+  }
+  .hist-title { font-size: 14px; font-weight: 600; color: var(--ink-strong); }
+  .hist-close {
+    background: none; border: none; cursor: pointer; font-size: 18px;
+    color: var(--ink-muted); line-height: 1; padding: 2px 6px;
+  }
+  .hist-close:hover { color: var(--ink-strong); }
+  #historyList { overflow-y: auto; padding: 8px 0; }
+  .hist-entry {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 20px; border-bottom: 1px solid var(--rule);
+    font-size: 12px;
+  }
+  .hist-entry:last-child { border-bottom: none; }
+  .hist-label { flex: 1; color: var(--ink); }
+  .hist-label strong { font-family: var(--mono); font-size: 11px; color: var(--accent); }
+  .hist-label .hist-date { color: var(--ink-muted); margin-left: 6px; }
+  .hist-original { background: var(--accent-wash); }
 </style>
 </head>
 <body>
@@ -114,6 +163,26 @@
 
   <div id="projectGrid"></div>
   <div id="emptyState" style="display:none">No projects yet. Upload a .cibd25 file to get started.</div>
+
+  <div class="archive-section" id="archiveSection" style="display:none">
+    <div class="archive-toggle" id="archiveToggle">
+      <span class="chevron">▶</span>
+      <span>Archived</span>
+      <span id="archiveCount" style="color:var(--ink-faint)"></span>
+    </div>
+    <div id="archiveGrid" style="display:none"></div>
+  </div>
+</div>
+
+<div id="historyModal">
+  <div id="historyBackdrop"></div>
+  <div id="historyPanel">
+    <div class="hist-header">
+      <div class="hist-title" id="historyTitle">Version History</div>
+      <button class="hist-close" id="historyClose">×</button>
+    </div>
+    <div id="historyList"></div>
+  </div>
 </div>
 
 <script>
@@ -135,28 +204,46 @@ function escHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+function makeCard(p, archived) {
+  const card = document.createElement('div');
+  card.className = 'project-card' + (archived ? ' archived' : '');
+  card.dataset.id = p.id;
+  const actions = archived
+    ? `<button class="btn primary" onclick="openProject(${p.id})">Open</button>
+       <a class="btn" href="/api/projects/${p.id}/file" download="${escHtml(p.originalFilename)}">Download</a>
+       <button class="btn" onclick="unarchiveProject(${p.id})">Unarchive</button>
+       <button class="btn danger" onclick="deleteProject(${p.id})">Delete</button>`
+    : `<button class="btn primary" onclick="openProject(${p.id})">Open</button>
+       <a class="btn" href="/api/projects/${p.id}/file" download="${escHtml(p.originalFilename)}">Download</a>
+       <button class="btn" onclick="startRename(${p.id})">Rename</button>
+       <button class="btn" onclick="showHistory(${p.id})">History</button>
+       <button class="btn" onclick="archiveProject(${p.id})">Archive</button>`;
+  card.innerHTML = `
+    <div class="card-name" title="${escHtml(p.name)}">${escHtml(p.name)}</div>
+    <div class="card-filename" title="${escHtml(p.originalFilename)}">${escHtml(p.originalFilename)}</div>
+    <div class="card-date">Saved ${fmtDate(p.updatedAt)}</div>
+    <div class="card-actions">${actions}</div>`;
+  return card;
+}
+
 function renderProjects() {
+  const active = projects.filter(p => !p.isArchived);
+  const archived = projects.filter(p => p.isArchived);
+
   const grid = document.getElementById('projectGrid');
   const empty = document.getElementById('emptyState');
-  if (!projects.length) { grid.innerHTML = ''; empty.style.display = ''; return; }
-  empty.style.display = 'none';
   grid.innerHTML = '';
-  for (const p of projects) {
-    const card = document.createElement('div');
-    card.className = 'project-card';
-    card.dataset.id = p.id;
-    card.innerHTML = `
-      <div class="card-name" title="${escHtml(p.name)}">${escHtml(p.name)}</div>
-      <div class="card-filename" title="${escHtml(p.originalFilename)}">${escHtml(p.originalFilename)}</div>
-      <div class="card-date">Saved ${fmtDate(p.updatedAt)}</div>
-      <div class="card-actions">
-        <button class="btn primary" onclick="openProject(${p.id})">Open</button>
-        <a class="btn" href="/api/projects/${p.id}/file" download="${escHtml(p.originalFilename)}">Download</a>
-        <button class="btn" onclick="startRename(${p.id})">Rename</button>
-        <button class="btn danger" onclick="deleteProject(${p.id})">Delete</button>
-      </div>`;
-    grid.appendChild(card);
-  }
+  if (!active.length) { empty.style.display = ''; } else { empty.style.display = 'none'; }
+  for (const p of active) grid.appendChild(makeCard(p, false));
+
+  const sec = document.getElementById('archiveSection');
+  const archGrid = document.getElementById('archiveGrid');
+  const archCount = document.getElementById('archiveCount');
+  if (!archived.length) { sec.style.display = 'none'; return; }
+  sec.style.display = '';
+  archCount.textContent = `(${archived.length})`;
+  archGrid.innerHTML = '';
+  for (const p of archived) archGrid.appendChild(makeCard(p, true));
 }
 
 function openProject(id) { window.location.href = `/editor?project=${id}`; }
@@ -170,6 +257,30 @@ async function deleteProject(id) {
     projects = projects.filter(x => x.id !== id);
     renderProjects();
   } catch (err) { showError('Delete failed: ' + err.message); }
+}
+
+async function archiveProject(id) {
+  try {
+    const r = await fetch(`/api/projects/${id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ isArchived: true }),
+    });
+    if (!r.ok) throw new Error((await r.json()).error);
+    projects.find(x => x.id === id).isArchived = true;
+    renderProjects();
+  } catch (err) { showError('Archive failed: ' + err.message); }
+}
+
+async function unarchiveProject(id) {
+  try {
+    const r = await fetch(`/api/projects/${id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ isArchived: false }),
+    });
+    if (!r.ok) throw new Error((await r.json()).error);
+    projects.find(x => x.id === id).isArchived = false;
+    renderProjects();
+  } catch (err) { showError('Unarchive failed: ' + err.message); }
 }
 
 function startRename(id) {
@@ -199,6 +310,74 @@ function startRename(id) {
     if (e.key === 'Escape') { renderProjects(); }
   });
 }
+
+// --- Version history ---
+async function showHistory(id) {
+  const p = projects.find(x => x.id === id);
+  const modal = document.getElementById('historyModal');
+  const list = document.getElementById('historyList');
+  document.getElementById('historyTitle').textContent = `History — ${p.name}`;
+  list.innerHTML = '<div style="padding:20px;color:var(--ink-muted);font-size:12px;">Loading…</div>';
+  modal.classList.add('open');
+  try {
+    const r = await fetch(`/api/projects/${id}/versions`);
+    if (!r.ok) throw new Error((await r.json()).error);
+    const data = await r.json();
+    list.innerHTML = '';
+
+    if (data.hasOriginal) {
+      const row = document.createElement('div');
+      row.className = 'hist-entry hist-original';
+      row.innerHTML = `
+        <div class="hist-label"><strong>Original upload</strong><span class="hist-date">as uploaded</span></div>
+        <a class="btn" href="/api/projects/${id}/versions/original/file" download="original_${escHtml(data.originalFilename)}">Download</a>`;
+      list.appendChild(row);
+    }
+
+    if (!data.versions.length && !data.hasOriginal) {
+      list.innerHTML = '<div style="padding:20px;color:var(--ink-muted);font-size:12px;">No saves recorded yet. Save the project from the editor to start tracking history.</div>';
+      return;
+    }
+    if (!data.versions.length) return;
+
+    for (const v of data.versions) {
+      const row = document.createElement('div');
+      row.className = 'hist-entry';
+      row.innerHTML = `
+        <div class="hist-label"><strong>v${v.versionNum}</strong><span class="hist-date">${fmtDate(v.savedAt)}</span></div>
+        <a class="btn" href="/api/projects/${id}/versions/${v.id}/file" download="v${v.versionNum}_${escHtml(data.originalFilename)}" style="margin-right:4px">Download</a>
+        <button class="btn" onclick="restoreVersion(${id},${v.id},${v.versionNum})">Restore</button>`;
+      list.appendChild(row);
+    }
+  } catch (err) {
+    list.innerHTML = `<div style="padding:20px;color:var(--error);font-size:12px;">Failed to load history: ${err.message}</div>`;
+  }
+}
+
+async function restoreVersion(projectId, versionId, versionNum) {
+  if (!confirm(`Restore v${versionNum}? The current file will be overwritten (a new version snapshot is saved first).`)) return;
+  try {
+    const r = await fetch(`/api/projects/${projectId}/restore/${versionId}`, { method: 'POST' });
+    if (!r.ok) throw new Error((await r.json()).error);
+    document.getElementById('historyModal').classList.remove('open');
+    showHistory(projectId); // reopen with updated list
+  } catch (err) { showError('Restore failed: ' + err.message); }
+}
+
+document.getElementById('historyClose').addEventListener('click', () => {
+  document.getElementById('historyModal').classList.remove('open');
+});
+document.getElementById('historyBackdrop').addEventListener('click', () => {
+  document.getElementById('historyModal').classList.remove('open');
+});
+
+// --- Archive toggle ---
+document.getElementById('archiveToggle').addEventListener('click', () => {
+  const toggle = document.getElementById('archiveToggle');
+  const grid = document.getElementById('archiveGrid');
+  const open = toggle.classList.toggle('open');
+  grid.style.display = open ? '' : 'none';
+});
 
 async function uploadFile(file) {
   const prog = document.getElementById('uploadProgress');
@@ -271,9 +450,20 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
 .vp-entry ul { margin: 5px 0 0; padding-left: 16px; color: var(--ink-muted, #6E737B); line-height: 1.65; }
 </style>
 
-<div id="ver-badge">v1.1.0</div>
+<div id="ver-badge">v1.3.0</div>
 <div id="ver-panel">
   <div class="vp-title">Changelog</div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.3.0</span><span class="vp-date">2026-08-04</span>
+    <ul>
+      <li>Version history — original upload preserved; each save snapshotted; download or restore any version</li>
+      <li>Archive — hide projects without deleting; collapsible archived section</li>
+    </ul>
+  </div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.2.0</span><span class="vp-date">2026-08-04</span>
+    <ul><li>← Projects link in editor topbar</li></ul>
+  </div>
   <div class="vp-entry">
     <span class="vp-ver">v1.1.0</span><span class="vp-date">2026-08-04</span>
     <ul><li>Version badge and changelog display</li></ul>

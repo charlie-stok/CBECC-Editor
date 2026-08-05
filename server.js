@@ -183,13 +183,13 @@ app.post('/api/auth/reset-password', async (req, res) => {
 app.get('/api/projects', auth, async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT id, name, original_filename, created_at, updated_at
+      `SELECT id, name, original_filename, created_at, updated_at, is_archived
        FROM projects WHERE user_id=$1 ORDER BY updated_at DESC`,
       [req.user.id]
     );
     res.json(rows.map(r => ({
       id: r.id, name: r.name, originalFilename: r.original_filename,
-      createdAt: r.created_at, updatedAt: r.updated_at,
+      createdAt: r.created_at, updatedAt: r.updated_at, isArchived: r.is_archived,
     })));
   } catch (err) {
     console.error(err);
@@ -205,14 +205,14 @@ app.post('/api/projects', auth, async (req, res) => {
     return res.status(413).json({ error: 'File too large (max 20 MB)' });
   try {
     const { rows } = await pool.query(
-      `INSERT INTO projects(user_id, name, original_filename, file_content)
-       VALUES($1,$2,$3,$4) RETURNING id, name, original_filename, created_at, updated_at`,
+      `INSERT INTO projects(user_id, name, original_filename, file_content, original_content)
+       VALUES($1,$2,$3,$4,$4) RETURNING id, name, original_filename, created_at, updated_at`,
       [req.user.id, name, originalFilename, content]
     );
     const r = rows[0];
     res.status(201).json({
       id: r.id, name: r.name, originalFilename: r.original_filename,
-      createdAt: r.created_at, updatedAt: r.updated_at,
+      createdAt: r.created_at, updatedAt: r.updated_at, isArchived: false,
     });
   } catch (err) {
     console.error(err);
@@ -265,6 +265,15 @@ app.put('/api/projects/:id/file', auth, async (req, res) => {
       [content, req.params.id, req.user.id]
     );
     if (!rowCount) return res.status(404).json({ error: 'Project not found' });
+    // Snapshot this save as a new version
+    const { rows: vRows } = await pool.query(
+      'SELECT COALESCE(MAX(version_num),0)+1 AS next FROM project_versions WHERE project_id=$1',
+      [req.params.id]
+    );
+    await pool.query(
+      'INSERT INTO project_versions(project_id, version_num, file_content) VALUES($1,$2,$3)',
+      [req.params.id, vRows[0].next, content]
+    );
     res.json({ ok: true });
   } catch (err) {
     console.error(err);
@@ -273,18 +282,24 @@ app.put('/api/projects/:id/file', auth, async (req, res) => {
 });
 
 app.patch('/api/projects/:id', auth, async (req, res) => {
-  const { name } = req.body || {};
-  if (!name || !name.trim()) return res.status(400).json({ error: 'Name required' });
+  const { name, isArchived } = req.body || {};
   try {
+    const updates = [];
+    const vals = [];
+    let i = 1;
+    if (name !== undefined) { updates.push(`name=$${i++}`); vals.push(name.trim()); }
+    if (isArchived !== undefined) { updates.push(`is_archived=$${i++}`); vals.push(!!isArchived); }
+    if (!updates.length) return res.status(400).json({ error: 'Nothing to update' });
+    vals.push(req.params.id, req.user.id);
     const { rowCount } = await pool.query(
-      'UPDATE projects SET name=$1, updated_at=NOW() WHERE id=$2 AND user_id=$3',
-      [name.trim(), req.params.id, req.user.id]
+      `UPDATE projects SET ${updates.join(', ')}, updated_at=NOW() WHERE id=$${i} AND user_id=$${i+1}`,
+      vals
     );
     if (!rowCount) return res.status(404).json({ error: 'Project not found' });
     res.json({ ok: true });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to rename project' });
+    res.status(500).json({ error: 'Failed to update project' });
   }
 });
 
@@ -300,6 +315,86 @@ app.delete('/api/projects/:id', auth, async (req, res) => {
     console.error(err);
     res.status(500).json({ error: 'Failed to delete project' });
   }
+});
+
+// --- Project version history ---
+app.get('/api/projects/:id/versions', auth, async (req, res) => {
+  try {
+    // Verify ownership
+    const { rows: proj } = await pool.query(
+      'SELECT id, original_filename, original_content FROM projects WHERE id=$1 AND user_id=$2',
+      [req.params.id, req.user.id]
+    );
+    if (!proj.length) return res.status(404).json({ error: 'Project not found' });
+    const { rows } = await pool.query(
+      'SELECT id, version_num, saved_at FROM project_versions WHERE project_id=$1 ORDER BY version_num DESC',
+      [req.params.id]
+    );
+    res.json({
+      hasOriginal: !!proj[0].original_content,
+      originalFilename: proj[0].original_filename,
+      versions: rows.map(r => ({ id: r.id, versionNum: r.version_num, savedAt: r.saved_at })),
+    });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to list versions' }); }
+});
+
+app.get('/api/projects/:id/versions/original/file', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT original_filename, original_content FROM projects WHERE id=$1 AND user_id=$2',
+      [req.params.id, req.user.id]
+    );
+    if (!rows.length || !rows[0].original_content)
+      return res.status(404).json({ error: 'Original not available' });
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="original_${rows[0].original_filename}"`);
+    res.send(rows[0].original_content);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to get original' }); }
+});
+
+app.get('/api/projects/:id/versions/:vid/file', auth, async (req, res) => {
+  try {
+    const { rows: proj } = await pool.query(
+      'SELECT original_filename FROM projects WHERE id=$1 AND user_id=$2',
+      [req.params.id, req.user.id]
+    );
+    if (!proj.length) return res.status(404).json({ error: 'Project not found' });
+    const { rows } = await pool.query(
+      'SELECT file_content, version_num FROM project_versions WHERE id=$1 AND project_id=$2',
+      [req.params.vid, req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Version not found' });
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition',
+      `attachment; filename="v${rows[0].version_num}_${proj[0].original_filename}"`);
+    res.send(rows[0].file_content);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to get version' }); }
+});
+
+app.post('/api/projects/:id/restore/:vid', auth, async (req, res) => {
+  try {
+    const { rows: vRows } = await pool.query(
+      `SELECT pv.file_content FROM project_versions pv
+       JOIN projects p ON p.id = pv.project_id
+       WHERE pv.id=$1 AND pv.project_id=$2 AND p.user_id=$3`,
+      [req.params.vid, req.params.id, req.user.id]
+    );
+    if (!vRows.length) return res.status(404).json({ error: 'Version not found' });
+    const content = vRows[0].file_content;
+    await pool.query(
+      'UPDATE projects SET file_content=$1, updated_at=NOW() WHERE id=$2',
+      [content, req.params.id]
+    );
+    const { rows: nRows } = await pool.query(
+      'SELECT COALESCE(MAX(version_num),0)+1 AS next FROM project_versions WHERE project_id=$1',
+      [req.params.id]
+    );
+    await pool.query(
+      'INSERT INTO project_versions(project_id, version_num, file_content) VALUES($1,$2,$3)',
+      [req.params.id, nRows[0].next, content]
+    );
+    res.json({ ok: true });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Restore failed' }); }
 });
 
 // --- Admin API ---
