@@ -5654,36 +5654,44 @@ function renderCreateWaterSideForm(container){
 
 /* =======================================================================
    STEP 8 — ASSIGN WATER-SIDE COILS
-   Two-panel drag-and-drop: unassigned coils (left) → loop cards (right).
-   Mirrors the "Assign Zones & Systems" UX with multi-select + lasso.
+   Two-panel drag-and-drop: unassigned items (left) → loop cards (right).
+   "Items" = CHW/HHW coils + ALL CW heat sources (WSHP coils, water-cooled
+   Chlr, HtPump) treated uniformly. Mirrors Assign Zones & Systems UX.
 ======================================================================= */
 function renderAssignWaterSideForm(container){
   if(!doc){ container.innerHTML = '<div class="warn-line">Load a file first.</div>'; return; }
 
-  var selectedCoils = new Set();
+  var selectedItems = new Set(); // names of selected unassigned items
   var nameFilter = "";
   var typeFilter = "";
 
-  function coilTypeLabel(c){
-    if(c.attrs.Type === "ChilledWater")      return "CHW";
-    if(c.attrs.Type === "HotWater")          return "HHW";
-    if(c.attrs.CndsrType === "WaterSource")  return "CW";
+  // ── Item classifiers ──────────────────────────────────────────────
+  function itemTypeLabel(item){
+    if(item.type === "Chlr" || item.type === "HtPump") return "CW";
+    if(item.attrs.Type === "ChilledWater")             return "CHW";
+    if(item.attrs.Type === "HotWater")                 return "HHW";
+    if(item.attrs.CndsrType === "WaterSource")         return "CW";
     return "?";
   }
-  function coilLoopType(c){
-    if(c.attrs.Type === "ChilledWater")      return "ChilledWater";
-    if(c.attrs.Type === "HotWater")          return "HotWater";
-    if(c.attrs.CndsrType === "WaterSource")  return "CondenserWater";
+  function itemLoopType(item){
+    if(item.type === "Chlr" || item.type === "HtPump") return "CondenserWater";
+    if(item.attrs.Type === "ChilledWater")             return "ChilledWater";
+    if(item.attrs.Type === "HotWater")                 return "HotWater";
+    if(item.attrs.CndsrType === "WaterSource")         return "CondenserWater";
     return null;
   }
-  function coilCompatibleWithLoop(coil, loop){
-    var lt = loop.attrs.Type;
-    if(lt === "ChilledWater")   return coil.attrs.Type === "ChilledWater";
-    if(lt === "HotWater")       return coil.attrs.Type === "HotWater";
-    if(lt === "CondenserWater") return coil.attrs.CndsrType === "WaterSource";
-    return false;
+  function itemCurrentLoop(item){
+    if(item.type === "Chlr" || item.type === "HtPump") return wsCondEquipCurrentCwLoop(item);
+    return wsCoilCurrentLoop(item);
   }
-  function parseDropCoils(payload){
+  function wireItemToLoop(item, loop){
+    if(item.type === "Chlr" || item.type === "HtPump") wsWireCondEquipToLoop(item, loop);
+    else wsWireCoilToLoop(item, loop);
+  }
+  function itemCompatibleWithLoop(item, loop){
+    return itemLoopType(item) === loop.attrs.Type;
+  }
+  function parseDropItems(payload){
     if(!payload) return [];
     if(payload.charAt(0) === "[") try{ return JSON.parse(payload); }catch(e){}
     return [payload];
@@ -5704,39 +5712,46 @@ function renderAssignWaterSideForm(container){
   function render(){
     container.innerHTML = "";
 
-    var waterCoils = wsGetWaterCoils();
-    var allLoops = doc.records.filter(function(r){ return r.type === "FluidSys" && r.attrs.Type !== "ServiceHotWater"; });
-    var unassignedCoils = waterCoils.filter(function(c){ return !wsCoilCurrentLoop(c); });
-    var wiredCount = waterCoils.length - unassignedCoils.length;
-    var allWired = waterCoils.length > 0 && unassignedCoils.length === 0;
+    // All assignable items: CHW/HHW coils + all CW heat sources (WSHP coils, Chlr, HtPump)
+    var chwCoils  = doc.records.filter(function(r){ return (r.type==="CoilClg"||r.type==="CoilHtg") && r.attrs.Type==="ChilledWater"; });
+    var hhwCoils  = doc.records.filter(function(r){ return (r.type==="CoilClg"||r.type==="CoilHtg") && r.attrs.Type==="HotWater"; });
+    var wshpCoils = doc.records.filter(function(r){ return (r.type==="CoilClg"||r.type==="CoilHtg") && r.attrs.CndsrType==="WaterSource"; });
+    var cwPlant   = doc.records.filter(function(r){ return (r.type==="Chlr" && r.attrs.CndsrType==="Fluid") || r.type==="HtPump"; });
+    var cwItems   = wshpCoils.concat(cwPlant);
+    var allItems  = chwCoils.concat(hhwCoils).concat(cwItems);
+    var allLoops  = doc.records.filter(function(r){ return r.type==="FluidSys" && r.attrs.Type!=="ServiceHotWater"; });
+
+    var unassignedItems = allItems.filter(function(i){ return !itemCurrentLoop(i); });
+    var wiredCount = allItems.length - unassignedItems.length;
+    var allWired = allItems.length > 0 && unassignedItems.length === 0;
 
     // Purge stale selections
-    selectedCoils.forEach(function(n){ if(!unassignedCoils.some(function(c){ return c.name === n; })) selectedCoils.delete(n); });
+    selectedItems.forEach(function(n){ if(!unassignedItems.some(function(i){ return i.name===n; })) selectedItems.delete(n); });
 
     // ── Status bar ───────────────────────────────────────────────────
     var statusBar = document.createElement('div');
     statusBar.style.cssText = "display:flex;align-items:center;gap:12px;margin-bottom:12px;";
     var statusText = document.createElement('div');
-    statusText.style.cssText = "flex:1;font-size:12px;color:" + (allWired ? "var(--color-accent-ink)" : (waterCoils.length===0 ? "var(--text-dim)" : "var(--edited)")) + ";";
-    statusText.textContent = waterCoils.length === 0 ? "No water-side coils in this file."
-      : wiredCount + "/" + waterCoils.length + " coils connected to a fluid loop.";
+    statusText.style.cssText = "flex:1;font-size:12px;color:" + (allWired ? "var(--color-accent-ink)" : allItems.length===0 ? "var(--text-dim)" : "var(--edited)") + ";";
+    statusText.textContent = allItems.length === 0 ? "No water-side coils or equipment in this file."
+      : wiredCount + "/" + allItems.length + " items connected to a fluid loop.";
     var autoBtn = document.createElement('button');
     autoBtn.className = "btn primary";
     autoBtn.textContent = "Auto-connect all";
-    autoBtn.disabled = allWired || waterCoils.length === 0;
+    autoBtn.disabled = allWired || allItems.length === 0;
     autoBtn.addEventListener('click', function(){
-      waterCoils.forEach(function(coil){
-        if(wsCoilCurrentLoop(coil)) return;
-        var lt = coilLoopType(coil);
-        var tgt = lt ? allLoops.find(function(l){ return l.attrs.Type === lt; }) : null;
-        if(tgt) wsWireCoilToLoop(coil, tgt);
+      allItems.forEach(function(item){
+        if(itemCurrentLoop(item)) return;
+        var lt = itemLoopType(item);
+        var tgt = lt ? allLoops.find(function(l){ return l.attrs.Type===lt; }) : null;
+        if(tgt) wireItemToLoop(item, tgt);
       });
       updateStatus(); render();
     });
     statusBar.appendChild(statusText); statusBar.appendChild(autoBtn);
     container.appendChild(statusBar);
 
-    if(waterCoils.length === 0){ return; }
+    if(allItems.length === 0){ return; }
 
     // ── Two-panel grid ───────────────────────────────────────────────
     var twoPanel = document.createElement('div');
@@ -5748,28 +5763,26 @@ function renderAssignWaterSideForm(container){
     leftEl.style.cssText = "border:1px solid var(--border);border-radius:var(--radius-2);background:var(--panel);display:flex;flex-direction:column;overflow:hidden;position:relative;";
     twoPanel.appendChild(leftEl);
 
-    // Header
     var lHdr = document.createElement('div');
     lHdr.style.cssText = "padding:10px 12px 8px;border-bottom:1px solid var(--border);";
     var lHdrText = document.createElement('div');
     lHdrText.style.cssText = "font-family:var(--mono);font-size:10.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--ink-faint);";
-    lHdrText.textContent = "Unassigned coils ";
+    lHdrText.textContent = "Unassigned ";
     var lBadge = document.createElement('span');
-    lBadge.style.cssText = unassignedCoils.length > 0 ? "color:var(--edited);" : "color:var(--text-dim);";
-    lBadge.textContent = "(" + unassignedCoils.length + ")";
+    lBadge.style.cssText = unassignedItems.length > 0 ? "color:var(--edited);" : "color:var(--text-dim);";
+    lBadge.textContent = "(" + unassignedItems.length + ")";
     lHdrText.appendChild(lBadge); lHdr.appendChild(lHdrText); leftEl.appendChild(lHdr);
 
-    // Name filter
     var filterWrap = createPlainFilterInput("Filter by name...", function(val){ nameFilter = val; render(); });
     filterWrap.style.cssText = "padding:6px 8px;border-bottom:1px solid var(--border);";
     var fInp = filterWrap.querySelector('input');
     if(fInp && nameFilter) fInp.value = nameFilter;
     leftEl.appendChild(filterWrap);
 
-    // Type filter dropdown (only if multiple coil types exist)
+    // Type filter dropdown
     var typesPresent = [];
     ["CHW","HHW","CW"].forEach(function(t){
-      if(waterCoils.some(function(c){ return coilTypeLabel(c) === t; })) typesPresent.push(t);
+      if(allItems.some(function(i){ return itemTypeLabel(i)===t; })) typesPresent.push(t);
     });
     if(typeFilter && typesPresent.indexOf(typeFilter) < 0) typeFilter = "";
     if(typesPresent.length > 1){
@@ -5783,12 +5796,12 @@ function renderAssignWaterSideForm(container){
       tRow.appendChild(tSel); leftEl.appendChild(tRow);
     }
 
-    // Apply filters
-    var visible = unassignedCoils.filter(function(c){
-      if(typeFilter && coilTypeLabel(c) !== typeFilter) return false;
+    // Apply filters to unassigned list
+    var visible = unassignedItems.filter(function(item){
+      if(typeFilter && itemTypeLabel(item) !== typeFilter) return false;
       if(nameFilter){
-        var sys = wsParentSysOfCoil(c);
-        var haystack = (c.name + " " + (sys ? sys.name : "")).toLowerCase();
+        var sys = (item.type==="CoilClg"||item.type==="CoilHtg") ? wsParentSysOfCoil(item) : null;
+        var haystack = (item.name + " " + (sys ? sys.name : "")).toLowerCase();
         if(!haystack.includes(nameFilter.toLowerCase())) return false;
       }
       return true;
@@ -5800,15 +5813,15 @@ function renderAssignWaterSideForm(container){
     var selAllCb = document.createElement('input');
     selAllCb.type = "checkbox";
     selAllCb.style.cssText = "cursor:pointer;margin:0;flex-shrink:0;";
-    selAllCb.checked = visible.length > 0 && visible.every(function(c){ return selectedCoils.has(c.name); });
-    selAllCb.indeterminate = !selAllCb.checked && visible.some(function(c){ return selectedCoils.has(c.name); });
+    selAllCb.checked = visible.length > 0 && visible.every(function(i){ return selectedItems.has(i.name); });
+    selAllCb.indeterminate = !selAllCb.checked && visible.some(function(i){ return selectedItems.has(i.name); });
     selAllCb.addEventListener('change', function(){
-      if(selAllCb.checked) visible.forEach(function(c){ selectedCoils.add(c.name); });
-      else visible.forEach(function(c){ selectedCoils.delete(c.name); });
+      if(selAllCb.checked) visible.forEach(function(i){ selectedItems.add(i.name); });
+      else visible.forEach(function(i){ selectedItems.delete(i.name); });
       render();
     });
     selAllRow.appendChild(selAllCb);
-    var selCount = selectedCoils.size;
+    var selCount = selectedItems.size;
     var selAllLabel = document.createElement('span');
     selAllLabel.textContent = selCount > 0 ? selCount + " selected" : "Select all (" + visible.length + ")";
     selAllRow.appendChild(selAllLabel);
@@ -5818,33 +5831,33 @@ function renderAssignWaterSideForm(container){
     selAllRow.appendChild(dragHint);
     leftEl.appendChild(selAllRow);
 
-    // Chip list with lasso area
+    // Chip list
     var listEl = document.createElement('div');
     listEl.style.cssText = "padding:8px;padding-bottom:52px;display:flex;flex-direction:column;gap:4px;min-height:80px;max-height:65vh;overflow-y:auto;position:relative;";
 
-    // Drop on list = disconnect coil(s)
+    // Drop on left list = disconnect item(s)
     wireDrop2(listEl, false, function(payload){
-      var names = parseDropCoils(payload);
+      var names = parseDropItems(payload);
       var changed = false;
       names.forEach(function(n){
-        var c = waterCoils.find(function(coil){ return coil.name === n; });
-        if(c){ wsWireCoilToLoop(c, null); changed = true; }
+        var item = allItems.find(function(i){ return i.name===n; });
+        if(item){ wireItemToLoop(item, null); changed = true; }
       });
-      selectedCoils.clear();
+      selectedItems.clear();
       if(changed){ updateStatus(); render(); }
     });
 
-    // Section groups: CHW / HHW / CW
+    // Section groups
     var TYPE_GROUPS = [
-      {key:"CHW", loopKey:"ChilledWater", label:"Chilled Water (CHW)"},
-      {key:"HHW", loopKey:"HotWater",     label:"Hot Water (HHW)"},
+      {key:"CHW", loopKey:"ChilledWater",  label:"Chilled Water (CHW)"},
+      {key:"HHW", loopKey:"HotWater",      label:"Hot Water (HHW)"},
       {key:"CW",  loopKey:"CondenserWater",label:"Condenser Water (CW)"},
     ];
     var showSectionHeaders = typesPresent.length > 1 && !typeFilter;
     var anyVisible = false;
     TYPE_GROUPS.forEach(function(grp){
-      var gCoils = visible.filter(function(c){ return coilTypeLabel(c) === grp.key; });
-      if(gCoils.length === 0) return;
+      var gItems = visible.filter(function(i){ return itemTypeLabel(i) === grp.key; });
+      if(gItems.length === 0) return;
       anyVisible = true;
       if(showSectionHeaders){
         var secHdr = document.createElement('div');
@@ -5852,13 +5865,13 @@ function renderAssignWaterSideForm(container){
         secHdr.innerHTML = wsDropSvg(grp.loopKey, 10) + '<span>' + grp.label + '</span>';
         listEl.appendChild(secHdr);
       }
-      gCoils.forEach(function(coil){ listEl.appendChild(makeCoilChip(coil)); });
+      gItems.forEach(function(item){ listEl.appendChild(makeItemChip(item)); });
     });
 
     if(!anyVisible){
       var emptyEl = document.createElement('div');
       emptyEl.style.cssText = "font-size:11.5px;color:var(--text-dim);padding:6px 4px;font-style:italic;";
-      emptyEl.textContent = unassignedCoils.length === 0 ? "All coils connected ✓" : "No matches.";
+      emptyEl.textContent = unassignedItems.length === 0 ? "All items connected ✓" : "No matches.";
       listEl.appendChild(emptyEl);
     }
 
@@ -5878,7 +5891,7 @@ function renderAssignWaterSideForm(container){
       lassoEl = document.createElement('div');
       lassoEl.style.cssText = "position:absolute;border:1px dashed var(--accent);background:var(--color-accent-wash);pointer-events:none;opacity:0.55;z-index:10;box-sizing:border-box;";
       listEl.appendChild(lassoEl);
-      if(!e.ctrlKey && !e.metaKey) selectedCoils.clear();
+      if(!e.ctrlKey && !e.metaKey) selectedItems.clear();
     });
     function onLassoMove(e){
       if(!lassoing || !lassoEl) return;
@@ -5892,10 +5905,10 @@ function renderAssignWaterSideForm(container){
       if(lassoEl){
         var lr = lassoEl.getBoundingClientRect();
         lassoEl.remove(); lassoEl = null;
-        listEl.querySelectorAll('[data-coil-name]').forEach(function(chip){
+        listEl.querySelectorAll('[data-item-name]').forEach(function(chip){
           var cr = chip.getBoundingClientRect();
           if(cr.right >= lr.left && cr.left <= lr.right && cr.bottom >= lr.top && cr.top <= lr.bottom)
-            selectedCoils.add(chip.dataset.coilName);
+            selectedItems.add(chip.dataset.itemName);
         });
         render();
       }
@@ -5927,73 +5940,79 @@ function renderAssignWaterSideForm(container){
       allLoops.forEach(function(loop){ rightEl.appendChild(makeLoopCard(loop)); });
     }
 
-    // Coils with no matching loop type
-    var unmatchedCoils = waterCoils.filter(function(c){
-      var lt = coilLoopType(c);
+    // Items with no matching loop type
+    var unmatchedItems = allItems.filter(function(item){
+      var lt = itemLoopType(item);
       return !lt || !allLoops.some(function(l){ return l.attrs.Type === lt; });
     });
-    if(unmatchedCoils.length > 0){
+    if(unmatchedItems.length > 0){
       var umCard = document.createElement('div');
       umCard.style.cssText = "border:1px solid var(--edited);border-left:3px solid var(--edited);border-radius:var(--radius-2);background:var(--panel);overflow:hidden;";
       var umHdr = document.createElement('div');
       umHdr.style.cssText = "padding:8px 14px;background:var(--panel2);font-family:var(--mono);font-size:12px;font-weight:600;color:var(--edited);";
-      umHdr.textContent = "Coils with no matching loop type";
+      umHdr.textContent = "Items with no matching loop type";
       umCard.appendChild(umHdr);
-      unmatchedCoils.forEach(function(coil){
-        var sys = wsParentSysOfCoil(coil);
-        var lt = coilLoopType(coil) || "?";
+      unmatchedItems.forEach(function(item){
+        var sys = (item.type==="CoilClg"||item.type==="CoilHtg") ? wsParentSysOfCoil(item) : null;
+        var lt = itemLoopType(item) || "?";
         var row = document.createElement('div');
         row.style.cssText = "display:flex;align-items:center;padding:6px 14px;gap:8px;border-top:1px solid var(--border);font-family:var(--mono);font-size:11px;";
         row.innerHTML = wsDropSvg(lt, 12)
-          + '<span>' + (sys ? '<strong>'+sys.name+'</strong> &rsaquo; ' : '') + coil.name + '</span>'
+          + '<span>' + (sys ? '<strong>'+sys.name+'</strong> &rsaquo; ' : '') + item.name + '</span>'
           + '<span style="margin-left:auto;color:var(--edited);font-size:10.5px;">Create a '+lt+' loop in step 7</span>';
         umCard.appendChild(row);
       });
       rightEl.appendChild(umCard);
     }
 
-    // ── Unassigned-coil chip (left panel) ────────────────────────────
-    function makeCoilChip(coil){
-      var isSel = selectedCoils.has(coil.name);
-      var sys = wsParentSysOfCoil(coil);
+    // ── Left-panel chip (unassigned item) ────────────────────────────
+    function makeItemChip(item){
+      var isSel = selectedItems.has(item.name);
+      var isCoil = item.type==="CoilClg" || item.type==="CoilHtg";
+      var sys = isCoil ? wsParentSysOfCoil(item) : null;
       var chip = document.createElement('div');
       chip.draggable = true;
-      chip.dataset.coilName = coil.name;
+      chip.dataset.itemName = item.name;
       chip.style.cssText = "font-family:var(--mono);font-size:11px;background:"
         + (isSel ? "var(--color-accent-wash)" : "var(--panel2)")
         + ";border:1px solid " + (isSel ? "var(--accent)" : "var(--border)")
         + ";border-radius:3px;padding:3px 8px;cursor:grab;user-select:none;display:flex;align-items:center;gap:6px;white-space:nowrap;";
       var kindBadge = document.createElement('span');
       kindBadge.style.cssText = "font-size:9.5px;background:var(--panel);border:1px solid var(--border);border-radius:3px;padding:1px 4px;flex-shrink:0;color:var(--text-dim);";
-      kindBadge.textContent = coilTypeLabel(coil);
+      kindBadge.textContent = itemTypeLabel(item);
       chip.appendChild(kindBadge);
       var nameSpan = document.createElement('span');
       nameSpan.style.cssText = "overflow:hidden;text-overflow:ellipsis;max-width:120px;";
-      nameSpan.textContent = sys ? sys.name : coil.name;
-      nameSpan.title = coil.name;
+      nameSpan.textContent = sys ? sys.name : item.name;
+      nameSpan.title = item.name;
       chip.appendChild(nameSpan);
       if(sys){
         var sub = document.createElement('span');
         sub.style.cssText = "font-size:10px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;max-width:80px;";
-        sub.textContent = "› " + coil.name;
-        sub.title = coil.name;
+        sub.textContent = "› " + item.name;
+        sub.title = item.name;
         chip.appendChild(sub);
+      } else if(!isCoil){
+        var typeSub = document.createElement('span');
+        typeSub.style.cssText = "font-size:10px;color:var(--text-dim);";
+        typeSub.textContent = item.type==="Chlr" ? "· Chiller" : "· HtPump";
+        chip.appendChild(typeSub);
       }
       chip.addEventListener('click', function(e){
         if(e.ctrlKey || e.metaKey){
           e.preventDefault();
-          if(selectedCoils.has(coil.name)) selectedCoils.delete(coil.name);
-          else selectedCoils.add(coil.name);
+          if(selectedItems.has(item.name)) selectedItems.delete(item.name);
+          else selectedItems.add(item.name);
           render();
         }
       });
       chip.addEventListener('dragstart', function(e){
         var payload;
-        if(selectedCoils.has(coil.name) && selectedCoils.size > 1){
-          payload = JSON.stringify(Array.from(selectedCoils));
+        if(selectedItems.has(item.name) && selectedItems.size > 1){
+          payload = JSON.stringify(Array.from(selectedItems));
         } else {
-          selectedCoils.clear(); selectedCoils.add(coil.name);
-          payload = coil.name;
+          selectedItems.clear(); selectedItems.add(item.name);
+          payload = item.name;
         }
         e.dataTransfer.setData('text/plain', payload);
         e.dataTransfer.effectAllowed = 'move';
@@ -6003,29 +6022,32 @@ function renderAssignWaterSideForm(container){
       return chip;
     }
 
-    // ── Assigned-coil chip (right panel drop zone) ───────────────────
-    function makeAssignedCoilChip(coil, loop){
-      var sys = wsParentSysOfCoil(coil);
+    // ── Assigned-item chip (right panel, with × and drag) ────────────
+    function makeAssignedItemChip(item){
+      var isCoil = item.type==="CoilClg" || item.type==="CoilHtg";
+      var sys = isCoil ? wsParentSysOfCoil(item) : null;
       var aChip = document.createElement('div');
       aChip.draggable = true;
       aChip.style.cssText = "display:inline-flex;align-items:center;gap:4px;font-family:var(--mono);font-size:11px;background:var(--panel2);border:1px solid var(--border);border-radius:3px;padding:2px 4px 2px 7px;cursor:grab;white-space:nowrap;";
       var aKind = document.createElement('span');
       aKind.style.cssText = "font-size:9.5px;background:var(--panel);border:1px solid var(--border);border-radius:3px;padding:1px 4px;color:var(--text-dim);flex-shrink:0;";
-      aKind.textContent = coilTypeLabel(coil);
+      aKind.textContent = itemTypeLabel(item);
       aChip.appendChild(aKind);
       var aName = document.createElement('span');
       aName.style.cssText = "overflow:hidden;text-overflow:ellipsis;max-width:200px;";
-      aName.textContent = (sys ? sys.name + " › " : "") + coil.name;
-      aName.title = coil.name;
+      if(sys) aName.textContent = sys.name + " › " + item.name;
+      else if(!isCoil) aName.textContent = item.name + (item.type==="Chlr" ? " · Chiller" : " · HtPump");
+      else aName.textContent = item.name;
+      aName.title = item.name;
       aChip.appendChild(aName);
       var xBtn = document.createElement('button');
       xBtn.style.cssText = "border:none;background:none;cursor:pointer;color:var(--text-dim);font-size:13px;padding:0 2px;line-height:1;";
       xBtn.textContent = "×";
       xBtn.title = "Disconnect from this loop";
-      xBtn.addEventListener('click', function(e){ e.stopPropagation(); wsWireCoilToLoop(coil, null); updateStatus(); render(); });
+      xBtn.addEventListener('click', function(e){ e.stopPropagation(); wireItemToLoop(item, null); updateStatus(); render(); });
       aChip.appendChild(xBtn);
       aChip.addEventListener('dragstart', function(e){
-        e.dataTransfer.setData('text/plain', coil.name);
+        e.dataTransfer.setData('text/plain', item.name);
         e.dataTransfer.effectAllowed = 'move';
         setTimeout(function(){ if(aChip.isConnected) aChip.style.opacity = '0.4'; }, 0);
       });
@@ -6037,12 +6059,11 @@ function renderAssignWaterSideForm(container){
     function makeLoopCard(loop){
       var loopType = loop.attrs.Type;
       var isCW = loopType === "CondenserWater";
-      var dropColor = loopType === "ChilledWater" ? "#5b9bd5" : loopType === "HotWater" ? "#e05050" : "#38a169";
-      var thisSup = wsSegsOf(loop).sup;
-      var assignedHere = waterCoils.filter(function(c){
-        return coilCompatibleWithLoop(c, loop) && thisSup && c.attrs.FluidSegInRef === thisSup.name;
-      });
-      var totalCompat = waterCoils.filter(function(c){ return coilCompatibleWithLoop(c, loop); }).length;
+      var dropColor = loopType==="ChilledWater" ? "#5b9bd5" : loopType==="HotWater" ? "#e05050" : "#38a169";
+
+      // Items assigned to this specific loop
+      var assignedHere = allItems.filter(function(item){ return itemCompatibleWithLoop(item,loop) && itemCurrentLoop(item)===loop; });
+      var totalCompat  = allItems.filter(function(item){ return itemCompatibleWithLoop(item,loop); }).length;
 
       var card = document.createElement('div');
       card.style.cssText = "border:1px solid var(--border);border-left:3px solid "+dropColor+";border-radius:var(--radius-2);background:var(--panel);overflow:hidden;";
@@ -6050,127 +6071,118 @@ function renderAssignWaterSideForm(container){
       // Header
       var hdr = document.createElement('div');
       hdr.style.cssText = "padding:10px 14px;background:var(--panel2);display:flex;align-items:center;gap:10px;";
-      var hdrColor = assignedHere.length === totalCompat && totalCompat > 0 ? "var(--color-accent-ink)" : "var(--text-dim)";
+      var hdrColor = assignedHere.length===totalCompat && totalCompat>0 ? "var(--color-accent-ink)" : "var(--text-dim)";
       hdr.innerHTML = wsDropSvg(loopType, 16)
         + '<span style="font-family:var(--mono);font-size:13px;font-weight:600;">'+loop.name+'</span>'
         + '<span style="font-size:10px;font-family:var(--mono);color:var(--text-dim);background:var(--panel);border:1px solid var(--border);padding:1px 7px;border-radius:3px;">'+loopType+'</span>'
-        + '<span style="margin-left:auto;font-size:11px;color:'+hdrColor+';">'+assignedHere.length+'/'+totalCompat+' coils</span>';
+        + '<span style="margin-left:auto;font-size:11px;color:'+hdrColor+';">'+assignedHere.length+'/'+totalCompat+' items</span>';
       card.appendChild(hdr);
 
-      // ── CW loop: three separate sections ─────────────────────────
       if(isCW){
-        var directChildren = getLoopChildren(doc, loop).filter(function(r){ return ["Chlr","Blr","HtPump","HtRej"].includes(r.type); });
-        var htRejEquip = directChildren.filter(function(r){ return r.type === "HtRej"; });
-
-        // Cross-reference water-cooled Chlr + HtPump that point at this loop's segments
-        var cwCh = getLoopChildren(doc, loop);
-        var cwPriSup = cwCh.find(function(r){ return r.type==="FluidSeg" && r.attrs.Type==="PrimarySupply"; });
-        var cwPriRet = cwCh.find(function(r){ return r.type==="FluidSeg" && r.attrs.Type==="PrimaryReturn"; });
-        var cwSegNames = new Set([cwPriSup&&cwPriSup.name, cwPriRet&&cwPriRet.name].filter(Boolean));
-        var heatSrcEquip = doc.records.filter(function(r){
-          if(r.type==="Chlr")   return cwSegNames.has(r.attrs.CndsrFluidSegInRef) || cwSegNames.has(r.attrs.CndsrFluidSegOutRef);
-          if(r.type==="HtPump") return cwSegNames.has(r.attrs.SrcFluidSegInRef)   || cwSegNames.has(r.attrs.SrcFluidSegOutRef);
-          return false;
-        });
-
-        function makeInfoChip(eq){
-          var eChip = document.createElement('span');
-          eChip.style.cssText = "display:inline-flex;align-items:center;gap:4px;background:var(--panel2);border:1px solid var(--border);border-radius:var(--radius-1);padding:2px 7px;font-family:var(--mono);font-size:10.5px;";
-          var eType = eq.type==="Chlr"?"Chiller":eq.type==="HtRej"?"Tower":"HtPump";
-          eChip.textContent = eq.name + " · " + eType;
-          return eChip;
-        }
-        function makeEquipRow(labelText, equipList, emptyMsg){
-          var row = document.createElement('div');
-          row.style.cssText = "padding:7px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;";
-          var lbl = document.createElement('span');
-          lbl.style.cssText = "font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--text-dim);flex-shrink:0;min-width:80px;";
-          lbl.textContent = labelText;
-          row.appendChild(lbl);
-          if(equipList.length === 0){
-            var none = document.createElement('span');
-            none.style.cssText = "font-size:11px;color:var(--edited);";
-            none.textContent = emptyMsg;
-            row.appendChild(none);
-          } else {
-            equipList.forEach(function(eq){ row.appendChild(makeInfoChip(eq)); });
-          }
-          return row;
-        }
-
-        card.appendChild(makeEquipRow("Heat rejection", htRejEquip, "No tower — add in Create Water-Side step."));
-
-        // Heat sources: styled like a demand-coils section (label + wrapped chips area)
-        var srcLbl2 = document.createElement('div');
-        srcLbl2.style.cssText = "padding:7px 14px 4px;font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--text-dim);";
-        srcLbl2.textContent = "Heat sources";
-        card.appendChild(srcLbl2);
-        var srcChips = document.createElement('div');
-        srcChips.style.cssText = "padding:0 14px 10px;display:flex;flex-wrap:wrap;gap:6px;min-height:30px;border-bottom:1px solid var(--border);";
-        if(heatSrcEquip.length === 0){
-          var noSrc = document.createElement('div');
-          noSrc.style.cssText = "font-size:11px;color:var(--edited);font-style:italic;padding:4px 0;";
-          noSrc.textContent = "No water-cooled chillers or water-source HPs — add in Create Water-Side step.";
-          srcChips.appendChild(noSrc);
+        // ── CW: Heat Rejection row (read-only) + Heat Sources drop zone ──
+        var htRejEquip = getLoopChildren(doc, loop).filter(function(r){ return r.type==="HtRej"; });
+        var rejRow = document.createElement('div');
+        rejRow.style.cssText = "padding:7px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;";
+        var rejLbl = document.createElement('span');
+        rejLbl.style.cssText = "font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--text-dim);flex-shrink:0;min-width:80px;";
+        rejLbl.textContent = "Heat rejection";
+        rejRow.appendChild(rejLbl);
+        if(htRejEquip.length === 0){
+          var noRej = document.createElement('span');
+          noRej.style.cssText = "font-size:11px;color:var(--edited);";
+          noRej.textContent = "No tower — add in Create Water-Side step.";
+          rejRow.appendChild(noRej);
         } else {
-          heatSrcEquip.forEach(function(eq){ srcChips.appendChild(makeInfoChip(eq)); });
+          htRejEquip.forEach(function(eq){
+            var eChip = document.createElement('span');
+            eChip.style.cssText = "display:inline-flex;align-items:center;gap:4px;background:var(--panel2);border:1px solid var(--border);border-radius:var(--radius-1);padding:2px 7px;font-family:var(--mono);font-size:10.5px;";
+            eChip.textContent = eq.name + " · Tower";
+            rejRow.appendChild(eChip);
+          });
         }
-        card.appendChild(srcChips);
+        card.appendChild(rejRow);
+
+        // Heat Sources = assignedHere (WSHP coils + Chlr + HtPump) — drop zone with × chips
+        var srcLbl = document.createElement('div');
+        srcLbl.style.cssText = "padding:7px 14px 4px;font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--text-dim);";
+        srcLbl.textContent = "Heat sources";
+        card.appendChild(srcLbl);
+
+        var dropZone = document.createElement('div');
+        dropZone.style.cssText = "padding:8px 14px 12px;display:flex;flex-wrap:wrap;gap:6px;min-height:52px;";
+        wireDrop2(dropZone, true, function(payload){
+          var names = parseDropItems(payload);
+          var changed = false;
+          names.forEach(function(n){
+            var item = allItems.find(function(i){ return i.name===n; });
+            if(item && itemCompatibleWithLoop(item, loop)){ wireItemToLoop(item, loop); changed = true; }
+          });
+          selectedItems.clear();
+          if(changed){ updateStatus(); render(); }
+        });
+        if(assignedHere.length === 0){
+          var hint = document.createElement('div');
+          hint.style.cssText = "font-size:11px;color:var(--text-dim);padding:8px 0;font-style:italic;width:100%;";
+          hint.textContent = "Drop heat sources here to connect";
+          dropZone.appendChild(hint);
+        } else {
+          assignedHere.forEach(function(item){ dropZone.appendChild(makeAssignedItemChip(item)); });
+        }
+        card.appendChild(dropZone);
 
       } else {
-        // CHW / HHW: single source row ─────────────────────────────
+        // ── CHW / HHW: Source row + Demand coils drop zone ────────────
         var sourceEquip = getLoopChildren(doc, loop).filter(function(r){ return ["Chlr","Blr","HtPump","HtRej"].includes(r.type); });
-        var srcRow = document.createElement('div');
-        srcRow.style.cssText = "padding:7px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;";
-        var srcLbl = document.createElement('span');
-        srcLbl.style.cssText = "font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--text-dim);flex-shrink:0;min-width:50px;";
-        srcLbl.textContent = "Source";
-        srcRow.appendChild(srcLbl);
+        var srcRow2 = document.createElement('div');
+        srcRow2.style.cssText = "padding:7px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;";
+        var srcLbl2 = document.createElement('span');
+        srcLbl2.style.cssText = "font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--text-dim);flex-shrink:0;min-width:50px;";
+        srcLbl2.textContent = "Source";
+        srcRow2.appendChild(srcLbl2);
         if(sourceEquip.length === 0){
           var noEq = document.createElement('span');
           noEq.style.cssText = "font-size:11px;color:var(--edited);";
           noEq.textContent = "No equipment — add in Create Water-Side step.";
-          srcRow.appendChild(noEq);
+          srcRow2.appendChild(noEq);
         } else {
           sourceEquip.forEach(function(eq){
             var eChip = document.createElement('span');
             eChip.style.cssText = "display:inline-flex;align-items:center;gap:4px;background:var(--panel2);border:1px solid var(--border);border-radius:var(--radius-1);padding:2px 7px;font-family:var(--mono);font-size:10.5px;";
             var eType = eq.type==="Chlr"?"Chiller":eq.type==="Blr"?"Boiler":eq.type==="HtRej"?"Tower":"HtPump";
             eChip.textContent = eq.name + " · " + eType;
-            srcRow.appendChild(eChip);
+            srcRow2.appendChild(eChip);
           });
         }
-        card.appendChild(srcRow);
-      }
+        card.appendChild(srcRow2);
 
-      // Demand coils drop zone (all loop types)
-      var demLbl = document.createElement('div');
-      demLbl.style.cssText = "padding:7px 14px 4px;font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--text-dim);";
-      demLbl.textContent = isCW ? "WSHP zone coils" : "Demand coils";
-      card.appendChild(demLbl);
+        var demLbl = document.createElement('div');
+        demLbl.style.cssText = "padding:7px 14px 4px;font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--text-dim);";
+        demLbl.textContent = "Demand coils";
+        card.appendChild(demLbl);
 
-      var dropZone = document.createElement('div');
-      dropZone.style.cssText = "padding:8px 14px 12px;display:flex;flex-wrap:wrap;gap:6px;min-height:52px;";
-      wireDrop2(dropZone, true, function(payload){
-        var names = parseDropCoils(payload);
-        var changed = false;
-        names.forEach(function(n){
-          var coil = waterCoils.find(function(c){ return c.name === n; });
-          if(coil && coilCompatibleWithLoop(coil, loop)){ wsWireCoilToLoop(coil, loop); changed = true; }
+        var dropZone2 = document.createElement('div');
+        dropZone2.style.cssText = "padding:8px 14px 12px;display:flex;flex-wrap:wrap;gap:6px;min-height:52px;";
+        wireDrop2(dropZone2, true, function(payload){
+          var names = parseDropItems(payload);
+          var changed = false;
+          names.forEach(function(n){
+            var item = allItems.find(function(i){ return i.name===n; });
+            if(item && itemCompatibleWithLoop(item, loop)){ wireItemToLoop(item, loop); changed = true; }
+          });
+          selectedItems.clear();
+          if(changed){ updateStatus(); render(); }
         });
-        selectedCoils.clear();
-        if(changed){ updateStatus(); render(); }
-      });
-
-      if(assignedHere.length === 0){
-        var hint = document.createElement('div');
-        hint.style.cssText = "font-size:11px;color:var(--text-dim);padding:8px 0;font-style:italic;width:100%;";
-        hint.textContent = "Drop coils here to connect";
-        dropZone.appendChild(hint);
-      } else {
-        assignedHere.forEach(function(coil){ dropZone.appendChild(makeAssignedCoilChip(coil, loop)); });
+        if(assignedHere.length === 0){
+          var hint2 = document.createElement('div');
+          hint2.style.cssText = "font-size:11px;color:var(--text-dim);padding:8px 0;font-style:italic;width:100%;";
+          hint2.textContent = "Drop coils here to connect";
+          dropZone2.appendChild(hint2);
+        } else {
+          assignedHere.forEach(function(item){ dropZone2.appendChild(makeAssignedItemChip(item)); });
+        }
+        card.appendChild(dropZone2);
       }
-      card.appendChild(dropZone);
+
       return card;
     }
   }
@@ -6934,9 +6946,17 @@ renderStepDetail(WORKFLOW_STEPS[0]);
 .vp-entry ul { margin: 5px 0 0; padding-left: 16px; color: var(--ink-muted, #6E737B); line-height: 1.65; }
 </style>
 
-<div id="ver-badge">v1.12.0</div>
+<div id="ver-badge">v1.13.0</div>
 <div id="ver-panel">
   <div class="vp-title">Changelog</div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.13.0</span><span class="vp-date">2026-08-05</span>
+    <ul>
+      <li>CW Heat Sources unified: WSHP coils, water-cooled chillers, and water-source HPs now share one drag-and-drop zone with × disconnect and cross-loop dragging</li>
+      <li>Left panel CW group now includes unassigned Chlr and HtPump items alongside WSHP coils</li>
+      <li>Removed separate "WSHP zone coils" section — all CW heat sources treated uniformly</li>
+    </ul>
+  </div>
   <div class="vp-entry">
     <span class="vp-ver">v1.12.0</span><span class="vp-date">2026-08-05</span>
     <ul>
