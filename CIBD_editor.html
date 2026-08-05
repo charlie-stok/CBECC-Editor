@@ -4970,8 +4970,10 @@ function switchLoopPumping(doc, loop, mode){
         dirtyRecords.add(rec);
       }
     }
-    const pumps = children.filter(r => r.type === "Pump");
-    const toRemove = new Set([...secSegs, ...(pumps.length >= 2 ? [pumps[1]] : [])]);
+    // Identify the secondary distribution pump by name (positional index breaks when
+    // there are multiple per-equipment pumps in the loop).
+    const secPumpRec = children.find(r => r.type === "Pump" && r.name === loop.name + " SecPump");
+    const toRemove = new Set([...secSegs, ...(secPumpRec ? [secPumpRec] : [])]);
     for(const r of toRemove){ const i = doc.records.indexOf(r); if(i !== -1) doc.records.splice(i, 1); }
   }
 }
@@ -5019,19 +5021,39 @@ function addEquipToLoop(doc, loop, equipType, opts){
     if(mkp) setPlainAttr(rec, "FluidSegMakeupRef", mkp.name);
   }
   if(!rec) return null;
-  const firstPump = ch.find(r => r.type === "Pump");
-  const insertIdx = firstPump ? doc.records.indexOf(firstPump)
+  // Insertion point: before secondary distribution segments (appended last by switchLoopPumping),
+  // or at end of the loop's children. Do NOT use "first pump" as anchor — CBECC-Com uses one
+  // pump per source equipment, not one pump per loop.
+  const firstSecSeg = ch.find(r => r.type === "FluidSeg" &&
+    (r.attrs.Type === "SecondarySupply" || r.attrs.Type === "SecondaryReturn"));
+  const insertIdx = firstSecSeg
+    ? doc.records.indexOf(firstSecSeg)
     : doc.records.indexOf(loop) + 1 + ch.length;
   doc.records.splice(insertIdx, 0, rec);
+  // Add a dedicated pump immediately after this equipment (WtrHtr has no pump).
+  if(equipType !== "WtrHtr"){
+    const loopType = loop.attrs.Type;
+    const pump = makeRecord("Pump", rec.name + " Pump");
+    setPlainAttr(pump, "SpdCtrl", loopType === "CondenserWater" ? "ConstantSpeed" : "VariableSpeed");
+    if(ch.some(r => r.type === equipType)) setPlainAttr(pump, "OperCtrl", "OnDemand"); // standby for parallel units
+    setPlainAttr(pump, "FlowMin", 0);
+    dirtyRecords.add(pump);
+    doc.records.splice(doc.records.indexOf(rec) + 1, 0, pump);
+  }
   return rec;
 }
 
 // Remove equipment from a loop and clear its fluid segment refs.
+// Also removes the companion pump (the Pump record immediately following the equipment).
 function removeEquipFromLoop(doc, equip){
   ["FluidSegInRef","FluidSegOutRef","EvapFluidSegInRef","EvapFluidSegOutRef",
    "CndsrFluidSegInRef","CndsrFluidSegOutRef","FluidSegMakeupRef"].forEach(f => deletePlainAttr(equip, f));
   const i = doc.records.indexOf(equip);
-  if(i !== -1) doc.records.splice(i, 1);
+  if(i !== -1){
+    const companion = doc.records[i + 1];
+    const count = (companion && companion.type === "Pump") ? 2 : 1;
+    doc.records.splice(i, count);
+  }
 }
 
 /* =======================================================================
@@ -5108,6 +5130,14 @@ function wsWireCondEquipToLoop(eq, loop){
     if(cr) setPlainAttr(eq, outAttr, cr.name);
   }
   dirtyRecords.add(eq);
+}
+// Returns the pump record immediately following an equipment record, or null.
+// CBECC-Com places one Pump after each source equipment (Chlr, Blr, HtRej, HtPump).
+function wsEquipPump(eq){
+  const i = doc.records.indexOf(eq);
+  if(i === -1) return null;
+  const next = doc.records[i + 1];
+  return (next && next.type === "Pump") ? next : null;
 }
 function wsLoopWiringStatus(loop){
   const {sup} = wsSegsOf(loop);
@@ -5392,8 +5422,9 @@ function renderCreateWaterSideForm(container){
   function buildLoopModal(box, loop){
     const ch = getLoopChildren(doc, loop);
     const mode = getLoopPumpingMode(ch);
-    const pumps = ch.filter(r => r.type==="Pump");
-    const priPump = pumps[0]||null, secPump = pumps.length>=2?pumps[1]:null;
+    // Secondary distribution pump identified by name (not position — per-equipment pumps exist too).
+    const secDistPump = ch.find(r => r.type==="Pump" && r.name===loop.name+" SecPump") || null;
+    const priEquipPumps = ch.filter(r => r.type==="Pump" && r.name!==loop.name+" SecPump");
     const fs = "background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:var(--radius-2);font-family:var(--mono);font-size:12px;";
     const spdO = v => `<option value="VariableSpeed" ${v==="VariableSpeed"?"selected":""}>Variable Speed</option><option value="ConstantSpeed" ${v!=="VariableSpeed"?"selected":""}>Constant Speed</option>`;
     const operO = v => `<option value="OnDemand" ${!v||v==="OnDemand"?"selected":""}>On Demand</option><option value="StandBy" ${v==="StandBy"?"selected":""}>Stand By</option><option value="Scheduled" ${v==="Scheduled"?"selected":""}>Scheduled</option>`;
@@ -5404,14 +5435,12 @@ function renderCreateWaterSideForm(container){
     if(loop.attrs.Type !== "ServiceHotWater"){
       const ps = document.createElement('div');
       let h = `<div style="font-family:var(--mono);font-size:10.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:10px;">Pumping</div>`;
-      h += `<div style="display:flex;gap:20px;margin-bottom:12px;"><label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="radio" name="pmode" value="Primary" ${mode==="Primary"?"checked":""}> Primary-only</label><label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="radio" name="pmode" value="PrimarySecondary" ${mode==="PrimarySecondary"?"checked":""}> Primary-Secondary</label></div>`;
-      h += `<div style="display:grid;grid-template-columns:auto 1fr 1fr;gap:5px 10px;align-items:center;max-width:380px;"><span style="font-size:11px;color:var(--text-dim);">Primary pump</span><select id="priSpd" style="${fs}">${spdO(priPump&&priPump.attrs.SpdCtrl)}</select><select id="priOper" style="${fs}">${operO(priPump&&priPump.attrs.OperCtrl)}</select>`;
-      if(mode==="PrimarySecondary") h += `<span style="font-size:11px;color:var(--text-dim);">Secondary pump</span><select id="secSpd" style="${fs}">${spdO(secPump&&secPump.attrs.SpdCtrl)}</select><select id="secOper" style="${fs}">${operO(secPump&&secPump.attrs.OperCtrl)}</select>`;
-      h += `</div>`;
+      h += `<div style="font-size:11px;color:var(--text-dim);margin-bottom:10px;">Primary pumps: ${priEquipPumps.length} (one per source equipment) — configure speed &amp; operation via each equipment chip.</div>`;
+      h += `<div style="display:flex;gap:20px;margin-bottom:12px;"><label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="radio" name="pmode" value="Primary" ${mode==="Primary"?"checked":""}> Primary-only</label><label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="radio" name="pmode" value="PrimarySecondary" ${mode==="PrimarySecondary"?"checked":""}> Primary-Secondary (adds distribution loop)</label></div>`;
+      if(mode==="PrimarySecondary") h += `<div style="display:grid;grid-template-columns:auto 1fr 1fr;gap:5px 10px;align-items:center;max-width:380px;"><span style="font-size:11px;color:var(--text-dim);">Distribution pump</span><select id="secSpd" style="${fs}">${spdO(secDistPump&&secDistPump.attrs.SpdCtrl)}</select><select id="secOper" style="${fs}">${operO(secDistPump&&secDistPump.attrs.OperCtrl)}</select></div>`;
       ps.innerHTML = h;
       ps.querySelectorAll('input[name="pmode"]').forEach(r => r.addEventListener('change', () => { switchLoopPumping(doc,loop,r.value); updateStatus(); closeModal(); openModal(b=>buildLoopModal(b,loop)); }));
-      function bndPump(p,sid,oid){ const se=ps.querySelector('#'+sid),oe=ps.querySelector('#'+oid); if(!p||!se) return; se.addEventListener('change',()=>{setPlainAttr(p,"SpdCtrl",se.value);dirtyRecords.add(p);updateStatus();}); oe.addEventListener('change',()=>{setPlainAttr(p,"OperCtrl",oe.value);dirtyRecords.add(p);updateStatus();}); }
-      bndPump(priPump,'priSpd','priOper'); if(mode==="PrimarySecondary") bndPump(secPump,'secSpd','secOper');
+      if(mode==="PrimarySecondary" && secDistPump){ function bndSec(p,sid,oid){ const se=ps.querySelector('#'+sid),oe=ps.querySelector('#'+oid); if(!p||!se) return; se.addEventListener('change',()=>{setPlainAttr(p,"SpdCtrl",se.value);dirtyRecords.add(p);updateStatus();}); oe.addEventListener('change',()=>{setPlainAttr(p,"OperCtrl",oe.value);dirtyRecords.add(p);updateStatus();}); } bndSec(secDistPump,'secSpd','secOper'); }
       box.appendChild(ps);
     }
   }
@@ -5503,6 +5532,42 @@ function renderCreateWaterSideForm(container){
       c.querySelector('#eq-wh-fuel').addEventListener('change',function(){setPlainAttr(eq,"FuelSrc",this.value);dirtyRecords.add(eq);updateStatus();});
       c.querySelector('#eq-wh-stor').addEventListener('change',function(){if(this.value)setPlainAttr(eq,"StorCap",parseFloat(this.value));else deletePlainAttr(eq,"StorCap");dirtyRecords.add(eq);updateStatus();});
       c.querySelector('#eq-wh-setp').addEventListener('change',function(){if(this.value)setPlainAttr(eq,"WtrHtrSetPtTemp",parseFloat(this.value));else deletePlainAttr(eq,"WtrHtrSetPtTemp");dirtyRecords.add(eq);updateStatus();});
+    }
+    // ── Companion pump section (Chlr, Blr, HtRej, HtPump — not WtrHtr) ──
+    if(eq.type !== "WtrHtr"){
+      const pump = wsEquipPump(eq);
+      const ps = document.createElement('div');
+      ps.style.cssText = "margin-top:14px;padding:10px 12px;background:var(--panel2);border:1px solid var(--border);border-radius:var(--radius-2);";
+      const pHdr = document.createElement('div');
+      pHdr.style.cssText = "font-size:11px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;";
+      pHdr.textContent = pump ? "Pump — " + pump.name : "Pump";
+      ps.appendChild(pHdr);
+      if(pump){
+        const pg = document.createElement('div');
+        pg.style.cssText = "display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center;";
+        function pLabel(t){ const s=document.createElement('span'); s.style.cssText="font-size:11px;color:var(--text-dim);"; s.textContent=t; return s; }
+        // SpdCtrl
+        pg.appendChild(pLabel("Speed Control"));
+        const spdSel = document.createElement('select');
+        spdSel.style.cssText = fs;
+        ["VariableSpeed","ConstantSpeed"].forEach(v=>{ const o=document.createElement('option'); o.value=v; o.textContent=v==="VariableSpeed"?"Variable Speed":"Constant Speed"; if((pump.attrs.SpdCtrl||"VariableSpeed")===v) o.selected=true; spdSel.appendChild(o); });
+        spdSel.addEventListener('change',function(){ setPlainAttr(pump,"SpdCtrl",this.value); dirtyRecords.add(pump); updateStatus(); });
+        pg.appendChild(spdSel);
+        // OperCtrl
+        pg.appendChild(pLabel("Operation Control"));
+        const opSel = document.createElement('select');
+        opSel.style.cssText = fs;
+        [{v:"OnDemand",l:"On Demand"},{v:"StandBy",l:"Stand By"},{v:"Scheduled",l:"Scheduled"}].forEach(({v,l})=>{ const o=document.createElement('option'); o.value=v; o.textContent=l; if((pump.attrs.OperCtrl||"OnDemand")===v) o.selected=true; opSel.appendChild(o); });
+        opSel.addEventListener('change',function(){ setPlainAttr(pump,"OperCtrl",this.value); dirtyRecords.add(pump); updateStatus(); });
+        pg.appendChild(opSel);
+        ps.appendChild(pg);
+      } else {
+        const nm = document.createElement('div');
+        nm.style.cssText = "font-size:11px;color:var(--edited);";
+        nm.textContent = "No companion pump found — re-add this equipment to create one.";
+        ps.appendChild(nm);
+      }
+      c.appendChild(ps);
     }
     box.appendChild(c);
   }
@@ -6603,9 +6668,18 @@ renderStepDetail(WORKFLOW_STEPS[0]);
 .vp-entry ul { margin: 5px 0 0; padding-left: 16px; color: var(--ink-muted, #6E737B); line-height: 1.65; }
 </style>
 
-<div id="ver-badge">v1.7.0</div>
+<div id="ver-badge">v1.8.0</div>
 <div id="ver-panel">
   <div class="vp-title">Changelog</div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.8.0</span><span class="vp-date">2026-08-05</span>
+    <ul>
+      <li>Pump model corrected to match CBECC-Com 2025 — one pump per source equipment (Chlr, Blr, HtRej, HtPump), not one pump per loop</li>
+      <li>Equipment modal now shows a Pump section for configuring Speed Control and Operation Control per equipment</li>
+      <li>Loop modal simplified — primary pump settings moved to each equipment chip; secondary distribution pump shown only for Primary-Secondary loops</li>
+      <li>Adding or removing source equipment also adds or removes its companion pump in the record list</li>
+    </ul>
+  </div>
   <div class="vp-entry">
     <span class="vp-ver">v1.7.0</span><span class="vp-date">2026-08-05</span>
     <ul>
