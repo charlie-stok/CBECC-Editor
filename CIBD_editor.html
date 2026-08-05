@@ -5219,9 +5219,12 @@ function renderCreateWaterSideForm(container){
     else if(eq.type==="HtPump") sumText = (eq.attrs.SrcFluidSegInRef?"Water-src":"Air-src") + " HP";
     else if(eq.type==="HtRej")  sumText = (eq.attrs.Type||"Open Tower");
     else if(eq.type==="WtrHtr") sumText = (eq.attrs.Type||"Conventional");
+    let cwAnno = "";
+    if(eq.type==="Chlr" && eq.attrs.CndsrType==="Fluid"){ const cl=wsCondEquipCurrentCwLoop(eq); cwAnno=cl?`<div style="font-size:9px;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">condenser → ${cl.name}</div>`:`<div style="font-size:9px;color:var(--edited);white-space:nowrap;">condenser → no CW loop</div>`; }
+    else if(eq.type==="HtPump" && eq.attrs.SrcFluidSegInRef){ const cl=wsCondEquipCurrentCwLoop(eq); cwAnno=cl?`<div style="font-size:9px;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">source → ${cl.name}</div>`:`<div style="font-size:9px;color:var(--edited);white-space:nowrap;">source → no CW loop</div>`; }
     const inner = document.createElement('div');
     inner.style.cssText = "flex:1;min-width:0;pointer-events:none;";
-    inner.innerHTML = `<div style="font-family:var(--mono);font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${eq.name}</div><div style="font-size:10px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${sumText}</div>`;
+    inner.innerHTML = `<div style="font-family:var(--mono);font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${eq.name}</div><div style="font-size:10px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${sumText}</div>${cwAnno}`;
     const delBtn = document.createElement('button');
     delBtn.textContent = "×"; delBtn.title = "Delete";
     delBtn.style.cssText = "border:none;background:none;cursor:pointer;color:var(--text-dim);font-size:14px;padding:0 2px;line-height:1;flex-shrink:0;";
@@ -5259,10 +5262,17 @@ function renderCreateWaterSideForm(container){
   function makeLoopCard(loop, siblingsOfSameType){
     const loopType = loop.attrs.Type;
     const isSHW = loopType === "ServiceHotWater";
-    const dropColor = loopType==="ChilledWater"?"#5b9bd5":loopType==="HotWater"?"#e05050":loopType==="CondenserWater"?"#38a169":"#d97706";
+    const isCW  = loopType === "CondenserWater";
+    const dropColor = loopType==="ChilledWater"?"#5b9bd5":loopType==="HotWater"?"#e05050":isCW?"#38a169":"#d97706";
     const ch = getLoopChildren(doc, loop);
     const equip = ch.filter(r => ["Chlr","Blr","HtPump","HtRej","WtrHtr"].includes(r.type));
     const {wired, total} = !isSHW ? wsLoopWiringStatus(loop) : {wired:0, total:0};
+
+    // For CW loops: find cross-referenced demand equipment (water-cooled chillers & WSHPs)
+    const cwDemandEquip = isCW ? wsGetCondSideEquip().filter(eq => {
+      const cl = wsCondEquipCurrentCwLoop(eq); return cl && cl.name === loop.name;
+    }) : [];
+    const htRejEquip = isCW ? equip.filter(r => r.type==="HtRej") : [];
 
     const card = document.createElement('div');
     card.style.cssText = "border:1px solid var(--border);border-left:3px solid "+dropColor+";border-radius:var(--radius-2);overflow:hidden;flex:1;min-width:180px;";
@@ -5270,9 +5280,15 @@ function renderCreateWaterSideForm(container){
     // Header — click to open loop config (pumping)
     const hdr = document.createElement('div');
     hdr.style.cssText = "padding:7px 10px;background:var(--panel2);display:flex;align-items:center;gap:6px;cursor:pointer;min-height:36px;";
-    const demandBadge = !isSHW && total > 0
-      ? `<span style="font-size:10px;color:${wired===total?"var(--color-accent-ink)":"var(--edited)"};">${wired}/${total} coils</span>`
-      : "";
+    let demandBadge = "";
+    if(isCW){
+      const demN = cwDemandEquip.length, rejN = htRejEquip.length;
+      const demColor = demN > 0 ? "var(--color-accent-ink)" : "var(--edited)";
+      demandBadge = `<span style="font-size:10px;color:${demColor};">${demN} demand${demN!==1?"s":""}</span>`
+        + (rejN > 0 ? `<span style="font-size:10px;color:var(--text-dim);">· ${rejN} tower${rejN!==1?"s":""}</span>` : "");
+    } else if(!isSHW && total > 0){
+      demandBadge = `<span style="font-size:10px;color:${wired===total?"var(--color-accent-ink)":"var(--edited)"};">${wired}/${total} coils</span>`;
+    }
     hdr.innerHTML = wsDropSvg(loopType, 13) +
       `<span style="font-family:var(--mono);font-size:12px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${loop.name}</span>` +
       demandBadge +
@@ -5282,38 +5298,55 @@ function renderCreateWaterSideForm(container){
     hdr.addEventListener('click', e => { if(e.target.classList.contains('ws-del-loop')) return; openModal(box => buildLoopModal(box, loop)); });
     card.appendChild(hdr);
 
-    // Body: equipment chips
-    const body = document.createElement('div');
-    body.style.cssText = "padding:8px 10px;display:flex;flex-wrap:wrap;gap:6px;min-height:52px;align-items:flex-start;align-content:flex-start;";
-    if(!equip.length){
-      const ph = document.createElement('div');
-      ph.style.cssText = "font-size:10px;color:var(--ink-faint);font-style:italic;padding-top:14px;";
-      ph.textContent = "Drop equipment here, or add below";
-      body.appendChild(ph);
+    if(isCW){
+      // Two-panel body: DEMANDS (cross-referenced equipment) | HEAT REJECTION (towers)
+      function makeCwSubPanelEl(title){ const p=document.createElement('div'); p.style.cssText="padding:8px 10px;min-height:52px;"; const lbl=document.createElement('div'); lbl.style.cssText="font-size:9px;letter-spacing:.07em;text-transform:uppercase;color:var(--text-dim);margin-bottom:6px;font-family:var(--mono);"; lbl.textContent=title; p.appendChild(lbl); return p; }
+      function makeDemandsChip(eq){ const fromLoop=doc.records.filter(r=>r.type==="FluidSys").find(l=>getLoopChildren(doc,l).includes(eq)); let sum=""; if(eq.type==="Chlr") sum=(eq.attrs.Type||"Scroll")+" · water-cooled"; else if(eq.type==="HtPump") sum="Water-source HP"; const chip=document.createElement('div'); chip.style.cssText="display:inline-flex;flex-direction:column;gap:0;background:var(--panel2);border:1px solid var(--border);border-radius:var(--radius-2);padding:4px 8px;font-family:var(--mono);font-size:11px;cursor:pointer;"; chip.innerHTML=`<span style="font-weight:600;">${eq.name}</span><span style="font-size:10px;color:var(--text-dim);">${sum}</span>`+(fromLoop?`<span style="font-size:9px;color:var(--ink-faint);">from ${fromLoop.name}</span>`:""); chip.title="Click to configure this equipment's CW connection"; chip.addEventListener('click',()=>openModal(box=>buildEquipModal(box,eq))); return chip; }
+      const twoCol = document.createElement('div');
+      twoCol.style.cssText = "display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--border);";
+      const demPanel = makeCwSubPanelEl("Demands — add heat to CW");
+      if(cwDemandEquip.length===0){ const ph=document.createElement('span'); ph.style.cssText="font-size:10px;color:var(--ink-faint);font-style:italic;"; ph.textContent="None — configure a water-cooled chiller or WSHP condenser to this loop"; demPanel.appendChild(ph); }
+      else { const chips=document.createElement('div'); chips.style.cssText="display:flex;flex-wrap:wrap;gap:5px;"; cwDemandEquip.forEach(eq=>chips.appendChild(makeDemandsChip(eq))); demPanel.appendChild(chips); }
+      const rejPanel = makeCwSubPanelEl("Heat rejection — remove heat from CW");
+      rejPanel.style.borderLeft = "1px solid var(--border)";
+      if(htRejEquip.length===0){ const ph=document.createElement('span'); ph.style.cssText="font-size:10px;color:var(--ink-faint);font-style:italic;"; ph.textContent="No tower — add via button below"; rejPanel.appendChild(ph); }
+      else { const chips=document.createElement('div'); chips.style.cssText="display:flex;flex-wrap:wrap;gap:5px;"; htRejEquip.forEach(eq=>chips.appendChild(makeEquipCard(eq,loop))); rejPanel.appendChild(chips); }
+      twoCol.appendChild(demPanel); twoCol.appendChild(rejPanel);
+      card.appendChild(twoCol);
+      // Footer
+      const foot=document.createElement('div'); foot.style.cssText="border-top:1px solid var(--border);padding:5px 8px;display:flex;gap:6px;flex-wrap:wrap;background:var(--panel2);"; const bStyle="font-size:10.5px;padding:2px 8px;"; function addBtn(label,fn){ const b=document.createElement('button'); b.className="btn"; b.style.cssText=bStyle; b.textContent=label; b.addEventListener('click',fn); foot.appendChild(b); }
+      addBtn("+ Cooling Tower",()=>{ const e=addEquipToLoop(doc,loop,"HtRej",{htRejType:"OpenTower"}); if(e){setPlainAttr(e,"ModCtrl","VariableSpeedDrive");setPlainAttr(e,"FanType","Axial");dirtyRecords.add(e);} updateStatus(); renderAll(); if(e) openModal(box=>buildEquipModal(box,e)); });
+      card.appendChild(foot);
+      if(siblingsOfSameType.length>1) wireEquipDrop(rejPanel,loop);
     } else {
-      equip.forEach(eq => body.appendChild(makeEquipCard(eq, loop)));
+      // CHW / HHW / SHW: single body with draggable source equipment
+      const body = document.createElement('div');
+      body.style.cssText = "padding:8px 10px;display:flex;flex-wrap:wrap;gap:6px;min-height:52px;align-items:flex-start;align-content:flex-start;";
+      if(!equip.length){
+        const ph = document.createElement('div');
+        ph.style.cssText = "font-size:10px;color:var(--ink-faint);font-style:italic;padding-top:14px;";
+        ph.textContent = "Drop equipment here, or add below";
+        body.appendChild(ph);
+      } else {
+        equip.forEach(eq => body.appendChild(makeEquipCard(eq, loop)));
+      }
+      card.appendChild(body);
+      // Footer: add buttons
+      const foot = document.createElement('div');
+      foot.style.cssText = "border-top:1px solid var(--border);padding:5px 8px;display:flex;gap:6px;flex-wrap:wrap;background:var(--panel2);";
+      const bStyle = "font-size:10.5px;padding:2px 8px;";
+      function addBtn(label, fn){ const b=document.createElement('button'); b.className="btn"; b.style.cssText=bStyle; b.textContent=label; b.addEventListener('click',fn); foot.appendChild(b); }
+      if(loopType==="ChilledWater"){
+        addBtn("+ Chiller", () => { const e=addEquipToLoop(doc,loop,"Chlr",{chlrType:"Scroll",chlrFuelSrc:"Electric",cndsrType:"Air"}); updateStatus(); renderAll(); if(e) openModal(box=>buildEquipModal(box,e)); });
+      } else if(loopType==="HotWater"){
+        addBtn("+ Boiler", () => { const e=addEquipToLoop(doc,loop,"Blr",{blrFuelSrc:"Gas"}); if(e){setPlainAttr(e,"DraftType","MechanicalNoncondensing");dirtyRecords.add(e);} updateStatus(); renderAll(); if(e) openModal(box=>buildEquipModal(box,e)); });
+        addBtn("+ Heat Pump", () => { const e=addEquipToLoop(doc,loop,"HtPump",{cndsrType:"AirSource"}); updateStatus(); renderAll(); if(e) openModal(box=>buildEquipModal(box,e)); });
+      } else if(loopType==="ServiceHotWater"){
+        addBtn("+ Water Heater", () => { const e=addEquipToLoop(doc,loop,"WtrHtr",{wtrHtrType:"Conventional",fuelSrc:"Gas"}); updateStatus(); renderAll(); if(e) openModal(box=>buildEquipModal(box,e)); });
+      }
+      card.appendChild(foot);
+      if(siblingsOfSameType.length > 1) wireEquipDrop(body, loop);
     }
-    card.appendChild(body);
-
-    // Footer: add buttons
-    const foot = document.createElement('div');
-    foot.style.cssText = "border-top:1px solid var(--border);padding:5px 8px;display:flex;gap:6px;flex-wrap:wrap;background:var(--panel2);";
-    const bStyle = "font-size:10.5px;padding:2px 8px;";
-    function addBtn(label, fn){ const b=document.createElement('button'); b.className="btn"; b.style.cssText=bStyle; b.textContent=label; b.addEventListener('click',fn); foot.appendChild(b); }
-    if(loopType==="ChilledWater"){
-      addBtn("+ Chiller", () => { const e=addEquipToLoop(doc,loop,"Chlr",{chlrType:"Scroll",chlrFuelSrc:"Electric",cndsrType:"Air"}); updateStatus(); renderAll(); if(e) openModal(box=>buildEquipModal(box,e)); });
-    } else if(loopType==="HotWater"){
-      addBtn("+ Boiler", () => { const e=addEquipToLoop(doc,loop,"Blr",{blrFuelSrc:"Gas"}); if(e){setPlainAttr(e,"DraftType","MechanicalNoncondensing");dirtyRecords.add(e);} updateStatus(); renderAll(); if(e) openModal(box=>buildEquipModal(box,e)); });
-      addBtn("+ Heat Pump", () => { const e=addEquipToLoop(doc,loop,"HtPump",{cndsrType:"AirSource"}); updateStatus(); renderAll(); if(e) openModal(box=>buildEquipModal(box,e)); });
-    } else if(loopType==="CondenserWater"){
-      addBtn("+ Cooling Tower", () => { const e=addEquipToLoop(doc,loop,"HtRej",{htRejType:"OpenTower"}); if(e){setPlainAttr(e,"ModCtrl","VariableSpeedDrive");setPlainAttr(e,"FanType","Axial");dirtyRecords.add(e);} updateStatus(); renderAll(); if(e) openModal(box=>buildEquipModal(box,e)); });
-    } else if(loopType==="ServiceHotWater"){
-      addBtn("+ Water Heater", () => { const e=addEquipToLoop(doc,loop,"WtrHtr",{wtrHtrType:"Conventional",fuelSrc:"Gas"}); updateStatus(); renderAll(); if(e) openModal(box=>buildEquipModal(box,e)); });
-    }
-    card.appendChild(foot);
-
-    // Wire drop only when there are sibling loops to drag between
-    if(siblingsOfSameType.length > 1) wireEquipDrop(body, loop);
     return card;
   }
 
@@ -6547,9 +6580,17 @@ renderStepDetail(WORKFLOW_STEPS[0]);
 .vp-entry ul { margin: 5px 0 0; padding-left: 16px; color: var(--ink-muted, #6E737B); line-height: 1.65; }
 </style>
 
-<div id="ver-badge">v1.5.0</div>
+<div id="ver-badge">v1.6.0</div>
 <div id="ver-panel">
   <div class="vp-title">Changelog</div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.6.0</span><span class="vp-date">2026-08-05</span>
+    <ul>
+      <li>CW loop card now splits into Demands (water-cooled chillers &amp; WSHPs — cross-referenced, read-only) and Heat Rejection (cooling towers — draggable) panels</li>
+      <li>Water-cooled chiller and water-source HP chips on CHW/HHW loops now show a "condenser → [CW loop]" annotation, making the cross-loop wiring visible at a glance</li>
+      <li>CW loop header badge now shows demand count and tower count instead of generic coil count</li>
+    </ul>
+  </div>
   <div class="vp-entry">
     <span class="vp-ver">v1.5.0</span><span class="vp-date">2026-08-05</span>
     <ul>
