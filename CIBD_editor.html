@@ -634,6 +634,7 @@ function loadDocFromText(text, filename) {
 
     appliedSteps.clear();
     appliedSteps.add("open-file");
+    if(filename && localStorage.getItem("cibd:geom:" + filename)) appliedSteps.add("confirm-geometry");
     activeStepId = detectFirstIncompleteStep();
     renderWorkflowSidebar();
     renderStepDetail(WORKFLOW_STEPS.find(s => s.id === activeStepId));
@@ -4876,6 +4877,7 @@ function renderConfirmGeometryForm(container){
   container.appendChild(wrap);
   embedViewer3DInto(wrap.querySelector('#embeddedViewerHost'));
   appliedSteps.add("confirm-geometry");
+  if(originalFilename) localStorage.setItem("cibd:geom:" + originalFilename, "1");
   renderWorkflowSidebar();
 }
 
@@ -5178,23 +5180,37 @@ function renderCreateWaterSideForm(container){
       card.style.cssText = "border:1px solid var(--border);border-radius:var(--radius-2);background:var(--panel);padding:12px 14px;margin-bottom:10px;";
       const dropColor = loop.attrs.Type === "ChilledWater" ? "#5b9bd5" : loop.attrs.Type === "HotWater" ? "#e05050" : loop.attrs.Type === "CondenserWater" ? "#38a169" : "#d97706";
       card.style.borderLeft = "3px solid " + dropColor;
-      let statusLine, wiringLine, wiringOk;
+      const labelStyle = "font-size:9px;letter-spacing:0.07em;text-transform:uppercase;font-family:var(--mono);color:var(--ink-faint);min-width:58px;padding-top:1px;flex-shrink:0;";
+      let srcText, pumpText, demandText, demandOk;
       if(isSHW){
         const shwSup = ch.find(r => r.type === "FluidSeg" && r.attrs.Type === "PrimarySupply");
         const assignedSpcs = shwSup ? doc.records.filter(r => r.type === "Spc" && r.attrs.SHWFluidSegRef === shwSup.name).length : 0;
         const totalSpcs = doc.records.filter(r => r.type === "Spc").length;
-        statusLine = wsEquipSummaryStr(loop);
-        wiringLine = totalSpcs > 0 ? assignedSpcs + "/" + totalSpcs + " spaces assigned" : "no spaces in file";
-        wiringOk = totalSpcs === 0 || assignedSpcs === totalSpcs;
+        srcText = wsEquipSummaryStr(loop);
+        pumpText = "";
+        demandText = totalSpcs > 0 ? assignedSpcs + "/" + totalSpcs + " spaces assigned" : "no spaces in file";
+        demandOk = totalSpcs === 0 || assignedSpcs === totalSpcs;
       } else {
         const mode = getLoopPumpingMode(ch);
         const pumps = ch.filter(r => r.type === "Pump");
         const {wired, total} = wsLoopWiringStatus(loop);
-        wiringOk = total === 0 || wired === total;
-        statusLine = wsEquipSummaryStr(loop) + " &nbsp;&middot;&nbsp; " + (mode === "PrimarySecondary" ? "Primary-Secondary" : "Primary-only") + " (" + pumps.length + " pump" + (pumps.length !== 1 ? "s" : "") + ")";
-        wiringLine = total > 0 ? wired + "/" + total + " coils wired" : "no compatible coils in file";
+        demandOk = total === 0 || wired === total;
+        srcText = wsEquipSummaryStr(loop);
+        pumpText = (mode === "PrimarySecondary" ? "Primary-Secondary" : "Primary-only") + " &nbsp;&middot;&nbsp; " + pumps.length + " pump" + (pumps.length !== 1 ? "s" : "");
+        demandText = total > 0 ? wired + "/" + total + " coils auto-wired" : "no compatible coils in file";
       }
-      card.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;"><div style="flex:1;min-width:0;"><div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">${wsDropSvg(loop.attrs.Type, 14)}<span style="font-family:var(--mono);font-size:13px;font-weight:600;">${loop.name}</span><span style="font-size:10px;font-family:var(--mono);color:var(--text-dim);background:var(--panel2);border:1px solid var(--border);padding:1px 7px;border-radius:3px;">${loop.attrs.Type}</span></div><div style="font-size:11px;color:var(--text-dim);margin-bottom:3px;">${statusLine}</div><div style="font-size:11px;color:${wiringOk ? "var(--color-accent-ink)" : "var(--edited)"};">${wiringLine}</div></div><div style="display:flex;gap:6px;flex-shrink:0;"><button class="btn primary" data-edit="${loop.name}" style="font-size:11px;padding:4px 10px;">Edit &#8594;</button><button class="btn" data-del="${loop.name}" style="font-size:11px;padding:4px 8px;">Delete</button></div></div>`;
+      const demandColor = demandOk ? "var(--color-accent-ink)" : "var(--edited)";
+      const demandIcon = demandOk && !isSHW ? " &#10003;" : "";
+      card.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+        <div style="flex:1;min-width:0;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">${wsDropSvg(loop.attrs.Type, 14)}<span style="font-family:var(--mono);font-size:13px;font-weight:600;">${loop.name}</span><span style="font-size:10px;font-family:var(--mono);color:var(--text-dim);background:var(--panel2);border:1px solid var(--border);padding:1px 7px;border-radius:3px;">${loop.attrs.Type}</span></div>
+          <div style="display:flex;flex-direction:column;gap:3px;border-top:1px solid var(--border);padding-top:7px;">
+            <div style="display:flex;align-items:baseline;gap:6px;"><span style="${labelStyle}">Sources</span><span style="font-size:11px;color:var(--text-dim);">${srcText}${pumpText ? " &nbsp;&middot;&nbsp; <span style='color:var(--text-dim);'>" + pumpText + "</span>" : ""}</span></div>
+            <div style="display:flex;align-items:baseline;gap:6px;"><span style="${labelStyle}">Demands</span><span style="font-size:11px;color:${demandColor};">${demandText}${demandIcon}</span></div>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0;margin-top:2px;"><button class="btn primary" data-edit="${loop.name}" style="font-size:11px;padding:4px 10px;">Edit &#8594;</button><button class="btn" data-del="${loop.name}" style="font-size:11px;padding:4px 8px;">Delete</button></div>
+      </div>`;
       wrap.appendChild(card);
     }
     wrap.querySelectorAll('button[data-edit]').forEach(btn => {
@@ -5602,6 +5618,53 @@ function renderCreateWaterSideForm(container){
       equipCard.appendChild(addRow);
     }
     renderEquipSection();
+
+    // ── Demands (read-only) ────────────────────────────────────────
+    if(loop.attrs.Type !== "ServiceHotWater"){
+      const demandCard = document.createElement('div');
+      demandCard.style.cssText = "border:1px solid var(--border);border-radius:var(--radius-2);background:var(--panel);padding:12px 14px;margin-bottom:14px;";
+      wrap.appendChild(demandCard);
+      function renderDemandSection(){
+        demandCard.innerHTML = "";
+        const hdrEl = document.createElement('div');
+        hdrEl.style.cssText = "display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px;";
+        hdrEl.innerHTML = `<span style="font-family:var(--mono);font-size:10.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--ink-faint);">Demands — auto-wired coils</span><span style="font-size:10px;color:var(--text-dim);">Managed in &ldquo;Assign water-side coils&rdquo;</span>`;
+        demandCard.appendChild(hdrEl);
+        const {sup} = wsSegsOf(loop);
+        const wc = wsGetWaterCoils();
+        let compatCoils = [];
+        if(loop.attrs.Type === "ChilledWater")        compatCoils = wc.filter(c => c.attrs.Type === "ChilledWater");
+        else if(loop.attrs.Type === "HotWater")       compatCoils = wc.filter(c => c.attrs.Type === "HotWater");
+        else if(loop.attrs.Type === "CondenserWater") compatCoils = wc.filter(c => c.attrs.CndsrType === "WaterSource");
+        if(!compatCoils.length){
+          const empty = document.createElement('div');
+          empty.style.cssText = "font-size:11px;color:var(--text-dim);font-style:italic;";
+          empty.textContent = "No compatible coils in this file.";
+          demandCard.appendChild(empty);
+          return;
+        }
+        const wiredCoils = compatCoils.filter(c => sup && c.attrs.FluidSegInRef === sup.name);
+        const unwiredCoils = compatCoils.filter(c => !(sup && c.attrs.FluidSegInRef === sup.name));
+        const grid = document.createElement('div');
+        grid.style.cssText = "display:flex;flex-direction:column;gap:3px;";
+        for(const coil of wiredCoils){
+          const sys = wsParentSysOfCoil(coil);
+          const row = document.createElement('div');
+          row.style.cssText = "display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;";
+          row.innerHTML = `<span style="color:var(--color-accent-ink);">&#10003;</span><span style="color:var(--text-dim);">${sys ? "<strong>" + sys.name + "</strong> &rsaquo; " : ""}${coil.name}</span><span style="font-size:10px;color:var(--text-dim);background:var(--panel2);border:1px solid var(--border);padding:0 5px;border-radius:3px;">auto-wired</span>`;
+          grid.appendChild(row);
+        }
+        for(const coil of unwiredCoils){
+          const sys = wsParentSysOfCoil(coil);
+          const row = document.createElement('div');
+          row.style.cssText = "display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;";
+          row.innerHTML = `<span style="color:var(--edited);">&#8212;</span><span style="color:var(--text-dim);">${sys ? "<strong>" + sys.name + "</strong> &rsaquo; " : ""}${coil.name}</span><span style="font-size:10px;color:var(--edited);">not wired</span>`;
+          grid.appendChild(row);
+        }
+        demandCard.appendChild(grid);
+      }
+      renderDemandSection();
+    }
   }
 
   renderAll();
@@ -6365,9 +6428,10 @@ const WORKFLOW_STEPS = [
     title: "Create water-side",
     subtitle: "FluidSys / equipment",
     kind: "interactive",
-    description: "Create fluid loops (ChilledWater, HotWater, CondenserWater) and add source equipment. " +
+    description: "Create fluid loops (ChilledWater, HotWater, CondenserWater) and define their <strong>sources</strong> &mdash; the chillers, boilers, and cooling towers that serve each loop. " +
+      "Each loop card also shows its <strong>demands</strong>: the coils auto-wired from the HVAC systems defined earlier. " +
       "Use &ldquo;Auto-create defaults&rdquo; to generate loops in one click, then drill into each loop " +
-      "to configure equipment type, condenser type, fuel, draft type (boilers), modulation control " +
+      "to configure sources: equipment type, condenser type, fuel, draft type (boilers), modulation control " +
       "(towers), and pumping mode. All options are constrained to CBECC-Com 2025 valid values.",
     renderForm: renderCreateWaterSideForm,
   },
@@ -6513,7 +6577,7 @@ function renderWorkflowSidebar(){
           const _shw = doc.records.filter(r => r.type === "FluidSys" && r.attrs.Type === "ServiceHotWater");
           if(_shw.length > 0){
             isDone = doc.records.some(r => r.type === "Spc" && r.attrs.SHWFluidSegRef);
-            isStale = !isDone && appliedSteps.has("assign-dhw");
+            isStale = !isDone; // SHW loop exists but no spaces wired → always flag
           }
         }
         break;
