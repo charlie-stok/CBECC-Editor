@@ -5654,287 +5654,479 @@ function renderCreateWaterSideForm(container){
 
 /* =======================================================================
    STEP 8 — ASSIGN WATER-SIDE COILS
-   Connect water coils to fluid loops: auto-connect + per-coil selector.
+   Two-panel drag-and-drop: unassigned coils (left) → loop cards (right).
+   Mirrors the "Assign Zones & Systems" UX with multi-select + lasso.
 ======================================================================= */
 function renderAssignWaterSideForm(container){
   if(!doc){ container.innerHTML = '<div class="warn-line">Load a file first.</div>'; return; }
 
-  function renderAll(){ container.innerHTML = ""; render(); }
+  var selectedCoils = new Set();
+  var nameFilter = "";
+  var typeFilter = "";
+
+  function coilTypeLabel(c){
+    if(c.attrs.Type === "ChilledWater")      return "CHW";
+    if(c.attrs.Type === "HotWater")          return "HHW";
+    if(c.attrs.CndsrType === "WaterSource")  return "CW";
+    return "?";
+  }
+  function coilLoopType(c){
+    if(c.attrs.Type === "ChilledWater")      return "ChilledWater";
+    if(c.attrs.Type === "HotWater")          return "HotWater";
+    if(c.attrs.CndsrType === "WaterSource")  return "CondenserWater";
+    return null;
+  }
+  function coilCompatibleWithLoop(coil, loop){
+    var lt = loop.attrs.Type;
+    if(lt === "ChilledWater")   return coil.attrs.Type === "ChilledWater";
+    if(lt === "HotWater")       return coil.attrs.Type === "HotWater";
+    if(lt === "CondenserWater") return coil.attrs.CndsrType === "WaterSource";
+    return false;
+  }
+  function parseDropCoils(payload){
+    if(!payload) return [];
+    if(payload.charAt(0) === "[") try{ return JSON.parse(payload); }catch(e){}
+    return [payload];
+  }
+  function wireDrop2(el, stopProp, onDrop){
+    el.addEventListener('dragover', function(e){
+      e.preventDefault(); if(stopProp) e.stopPropagation();
+      el.style.outline = "2px dashed var(--accent)"; el.style.outlineOffset = "-2px";
+    });
+    el.addEventListener('dragleave', function(){ el.style.outline = ""; el.style.outlineOffset = ""; });
+    el.addEventListener('drop', function(e){
+      e.preventDefault(); if(stopProp) e.stopPropagation();
+      el.style.outline = ""; el.style.outlineOffset = "";
+      var raw = e.dataTransfer.getData('text/plain'); if(raw) onDrop(raw);
+    });
+  }
 
   function render(){
-    const wrap = document.createElement('div');
-    wrap.style.cssText = "max-width:740px;";
-    container.appendChild(wrap);
+    container.innerHTML = "";
 
-    const waterCoils = wsGetWaterCoils();
-    const allLoops = doc.records.filter(r => r.type === "FluidSys" && r.attrs.Type !== "ServiceHotWater");
-    const wiredCount = waterCoils.filter(c => wsCoilCurrentLoop(c)).length;
-    const allWired = waterCoils.length > 0 && wiredCount === waterCoils.length;
+    var waterCoils = wsGetWaterCoils();
+    var allLoops = doc.records.filter(function(r){ return r.type === "FluidSys" && r.attrs.Type !== "ServiceHotWater"; });
+    var unassignedCoils = waterCoils.filter(function(c){ return !wsCoilCurrentLoop(c); });
+    var wiredCount = waterCoils.length - unassignedCoils.length;
+    var allWired = waterCoils.length > 0 && unassignedCoils.length === 0;
 
-    // ── Status bar ─────────────────────────────────────────────────
-    const statusBar = document.createElement('div');
-    statusBar.style.cssText = "display:flex;align-items:center;gap:12px;margin-bottom:16px;";
-    const statusText = document.createElement('div');
-    statusText.style.cssText = "flex:1;font-size:12px;color:" + (allWired ? "var(--color-accent-ink)" : "var(--edited)") + ";";
+    // Purge stale selections
+    selectedCoils.forEach(function(n){ if(!unassignedCoils.some(function(c){ return c.name === n; })) selectedCoils.delete(n); });
+
+    // ── Status bar ───────────────────────────────────────────────────
+    var statusBar = document.createElement('div');
+    statusBar.style.cssText = "display:flex;align-items:center;gap:12px;margin-bottom:12px;";
+    var statusText = document.createElement('div');
+    statusText.style.cssText = "flex:1;font-size:12px;color:" + (allWired ? "var(--color-accent-ink)" : (waterCoils.length===0 ? "var(--text-dim)" : "var(--edited)")) + ";";
     statusText.textContent = waterCoils.length === 0 ? "No water-side coils in this file."
       : wiredCount + "/" + waterCoils.length + " coils connected to a fluid loop.";
-    const autoBtn = document.createElement('button');
+    var autoBtn = document.createElement('button');
     autoBtn.className = "btn primary";
     autoBtn.textContent = "Auto-connect all";
-    autoBtn.addEventListener('click', () => {
-      waterCoils.forEach(coil => {
+    autoBtn.disabled = allWired || waterCoils.length === 0;
+    autoBtn.addEventListener('click', function(){
+      waterCoils.forEach(function(coil){
         if(wsCoilCurrentLoop(coil)) return;
-        let tgt = null;
-        if(coil.attrs.Type === "ChilledWater")        tgt = allLoops.find(l => l.attrs.Type === "ChilledWater");
-        else if(coil.attrs.Type === "HotWater")       tgt = allLoops.find(l => l.attrs.Type === "HotWater");
-        else if(coil.attrs.CndsrType === "WaterSource") tgt = allLoops.find(l => l.attrs.Type === "CondenserWater");
+        var lt = coilLoopType(coil);
+        var tgt = lt ? allLoops.find(function(l){ return l.attrs.Type === lt; }) : null;
         if(tgt) wsWireCoilToLoop(coil, tgt);
       });
-      updateStatus(); renderAll();
+      updateStatus(); render();
     });
-    statusBar.appendChild(statusText);
-    statusBar.appendChild(autoBtn);
-    wrap.appendChild(statusBar);
+    statusBar.appendChild(statusText); statusBar.appendChild(autoBtn);
+    container.appendChild(statusBar);
+
+    if(waterCoils.length === 0){ return; }
+
+    // ── Two-panel grid ───────────────────────────────────────────────
+    var twoPanel = document.createElement('div');
+    twoPanel.style.cssText = "display:grid;grid-template-columns:270px 1fr;gap:14px;align-items:start;min-height:400px;";
+    container.appendChild(twoPanel);
+
+    // ─── LEFT PANEL ──────────────────────────────────────────────────
+    var leftEl = document.createElement('div');
+    leftEl.style.cssText = "border:1px solid var(--border);border-radius:var(--radius-2);background:var(--panel);display:flex;flex-direction:column;overflow:hidden;position:relative;";
+    twoPanel.appendChild(leftEl);
+
+    // Header
+    var lHdr = document.createElement('div');
+    lHdr.style.cssText = "padding:10px 12px 8px;border-bottom:1px solid var(--border);";
+    var lHdrText = document.createElement('div');
+    lHdrText.style.cssText = "font-family:var(--mono);font-size:10.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--ink-faint);";
+    lHdrText.textContent = "Unassigned coils ";
+    var lBadge = document.createElement('span');
+    lBadge.style.cssText = unassignedCoils.length > 0 ? "color:var(--edited);" : "color:var(--text-dim);";
+    lBadge.textContent = "(" + unassignedCoils.length + ")";
+    lHdrText.appendChild(lBadge); lHdr.appendChild(lHdrText); leftEl.appendChild(lHdr);
+
+    // Name filter
+    var filterWrap = createPlainFilterInput("Filter by name...", function(val){ nameFilter = val; render(); });
+    filterWrap.style.cssText = "padding:6px 8px;border-bottom:1px solid var(--border);";
+    var fInp = filterWrap.querySelector('input');
+    if(fInp && nameFilter) fInp.value = nameFilter;
+    leftEl.appendChild(filterWrap);
+
+    // Type filter dropdown (only if multiple coil types exist)
+    var typesPresent = [];
+    ["CHW","HHW","CW"].forEach(function(t){
+      if(waterCoils.some(function(c){ return coilTypeLabel(c) === t; })) typesPresent.push(t);
+    });
+    if(typeFilter && typesPresent.indexOf(typeFilter) < 0) typeFilter = "";
+    if(typesPresent.length > 1){
+      var tRow = document.createElement('div');
+      tRow.style.cssText = "padding:4px 8px;border-bottom:1px solid var(--border);";
+      var tSel = document.createElement('select');
+      tSel.style.cssText = "background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:var(--radius-1);font-size:10.5px;font-family:var(--mono);padding:2px 4px;width:100%;cursor:pointer;";
+      tSel.innerHTML = '<option value="">Type: all</option>'
+        + typesPresent.map(function(t){ return '<option value="'+t+'"'+(typeFilter===t?' selected':'')+'>'+t+'</option>'; }).join('');
+      tSel.addEventListener('change', function(){ typeFilter = tSel.value; render(); });
+      tRow.appendChild(tSel); leftEl.appendChild(tRow);
+    }
+
+    // Apply filters
+    var visible = unassignedCoils.filter(function(c){
+      if(typeFilter && coilTypeLabel(c) !== typeFilter) return false;
+      if(nameFilter){
+        var sys = wsParentSysOfCoil(c);
+        var haystack = (c.name + " " + (sys ? sys.name : "")).toLowerCase();
+        if(!haystack.includes(nameFilter.toLowerCase())) return false;
+      }
+      return true;
+    });
+
+    // Select-all row
+    var selAllRow = document.createElement('div');
+    selAllRow.style.cssText = "display:flex;align-items:center;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border);font-size:11px;color:var(--text-dim);";
+    var selAllCb = document.createElement('input');
+    selAllCb.type = "checkbox";
+    selAllCb.style.cssText = "cursor:pointer;margin:0;flex-shrink:0;";
+    selAllCb.checked = visible.length > 0 && visible.every(function(c){ return selectedCoils.has(c.name); });
+    selAllCb.indeterminate = !selAllCb.checked && visible.some(function(c){ return selectedCoils.has(c.name); });
+    selAllCb.addEventListener('change', function(){
+      if(selAllCb.checked) visible.forEach(function(c){ selectedCoils.add(c.name); });
+      else visible.forEach(function(c){ selectedCoils.delete(c.name); });
+      render();
+    });
+    selAllRow.appendChild(selAllCb);
+    var selCount = selectedCoils.size;
+    var selAllLabel = document.createElement('span');
+    selAllLabel.textContent = selCount > 0 ? selCount + " selected" : "Select all (" + visible.length + ")";
+    selAllRow.appendChild(selAllLabel);
+    var dragHint = document.createElement('span');
+    dragHint.style.cssText = "margin-left:auto;font-size:10px;color:var(--ink-faint);font-style:italic;";
+    dragHint.textContent = selCount > 0 ? "drag any →" : "ctrl-click or lasso";
+    selAllRow.appendChild(dragHint);
+    leftEl.appendChild(selAllRow);
+
+    // Chip list with lasso area
+    var listEl = document.createElement('div');
+    listEl.style.cssText = "padding:8px;padding-bottom:52px;display:flex;flex-direction:column;gap:4px;min-height:80px;max-height:65vh;overflow-y:auto;position:relative;";
+
+    // Drop on list = disconnect coil(s)
+    wireDrop2(listEl, false, function(payload){
+      var names = parseDropCoils(payload);
+      var changed = false;
+      names.forEach(function(n){
+        var c = waterCoils.find(function(coil){ return coil.name === n; });
+        if(c){ wsWireCoilToLoop(c, null); changed = true; }
+      });
+      selectedCoils.clear();
+      if(changed){ updateStatus(); render(); }
+    });
+
+    // Section groups: CHW / HHW / CW
+    var TYPE_GROUPS = [
+      {key:"CHW", loopKey:"ChilledWater", label:"Chilled Water (CHW)"},
+      {key:"HHW", loopKey:"HotWater",     label:"Hot Water (HHW)"},
+      {key:"CW",  loopKey:"CondenserWater",label:"Condenser Water (CW)"},
+    ];
+    var showSectionHeaders = typesPresent.length > 1 && !typeFilter;
+    var anyVisible = false;
+    TYPE_GROUPS.forEach(function(grp){
+      var gCoils = visible.filter(function(c){ return coilTypeLabel(c) === grp.key; });
+      if(gCoils.length === 0) return;
+      anyVisible = true;
+      if(showSectionHeaders){
+        var secHdr = document.createElement('div');
+        secHdr.style.cssText = "display:flex;align-items:center;gap:5px;font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--text-dim);padding:4px 2px 2px;";
+        secHdr.innerHTML = wsDropSvg(grp.loopKey, 10) + '<span>' + grp.label + '</span>';
+        listEl.appendChild(secHdr);
+      }
+      gCoils.forEach(function(coil){ listEl.appendChild(makeCoilChip(coil)); });
+    });
+
+    if(!anyVisible){
+      var emptyEl = document.createElement('div');
+      emptyEl.style.cssText = "font-size:11.5px;color:var(--text-dim);padding:6px 4px;font-style:italic;";
+      emptyEl.textContent = unassignedCoils.length === 0 ? "All coils connected ✓" : "No matches.";
+      listEl.appendChild(emptyEl);
+    }
+
+    var lassoHintEl = document.createElement('div');
+    lassoHintEl.style.cssText = "position:absolute;bottom:8px;left:0;right:0;text-align:center;font-size:10px;color:var(--ink-faint);font-style:italic;pointer-events:none;user-select:none;";
+    lassoHintEl.textContent = "↖ drag on empty area to lasso-select";
+    listEl.appendChild(lassoHintEl);
+    leftEl.appendChild(listEl);
+
+    // Lasso selection
+    var lassoEl = null, lassoX = 0, lassoY = 0, lassoing = false;
+    listEl.addEventListener('mousedown', function(e){
+      if(e.target !== listEl || e.button !== 0) return;
+      lassoing = true;
+      var r = listEl.getBoundingClientRect();
+      lassoX = e.clientX - r.left; lassoY = e.clientY - r.top + listEl.scrollTop;
+      lassoEl = document.createElement('div');
+      lassoEl.style.cssText = "position:absolute;border:1px dashed var(--accent);background:var(--color-accent-wash);pointer-events:none;opacity:0.55;z-index:10;box-sizing:border-box;";
+      listEl.appendChild(lassoEl);
+      if(!e.ctrlKey && !e.metaKey) selectedCoils.clear();
+    });
+    function onLassoMove(e){
+      if(!lassoing || !lassoEl) return;
+      var r = listEl.getBoundingClientRect();
+      var cx = e.clientX - r.left, cy = e.clientY - r.top + listEl.scrollTop;
+      lassoEl.style.left   = Math.min(cx, lassoX) + "px"; lassoEl.style.top    = Math.min(cy, lassoY) + "px";
+      lassoEl.style.width  = Math.abs(cx - lassoX) + "px"; lassoEl.style.height = Math.abs(cy - lassoY) + "px";
+    }
+    function onLassoUp(){
+      if(!lassoing) return; lassoing = false;
+      if(lassoEl){
+        var lr = lassoEl.getBoundingClientRect();
+        lassoEl.remove(); lassoEl = null;
+        listEl.querySelectorAll('[data-coil-name]').forEach(function(chip){
+          var cr = chip.getBoundingClientRect();
+          if(cr.right >= lr.left && cr.left <= lr.right && cr.bottom >= lr.top && cr.top <= lr.bottom)
+            selectedCoils.add(chip.dataset.coilName);
+        });
+        render();
+      }
+    }
+    document.addEventListener('mousemove', onLassoMove);
+    document.addEventListener('mouseup', onLassoUp);
+    var obs = new MutationObserver(function(muts){
+      muts.forEach(function(m){ m.removedNodes.forEach(function(n){
+        if(n === listEl || n === leftEl){
+          document.removeEventListener('mousemove', onLassoMove);
+          document.removeEventListener('mouseup', onLassoUp);
+          obs.disconnect();
+        }
+      }); });
+    });
+    obs.observe(leftEl.parentElement || document.body, {childList: true, subtree: true});
+
+    // ─── RIGHT PANEL ─────────────────────────────────────────────────
+    var rightEl = document.createElement('div');
+    rightEl.style.cssText = "display:flex;flex-direction:column;gap:12px;";
+    twoPanel.appendChild(rightEl);
 
     if(allLoops.length === 0){
-      const warn = document.createElement('div');
-      warn.style.cssText = "border:1px solid var(--edited);border-radius:var(--radius-2);padding:10px 14px;font-size:12px;color:var(--edited);margin-bottom:14px;";
-      warn.textContent = "No fluid loops defined -- create them in the Create Water-Side step first.";
-      wrap.appendChild(warn);
-      if(!waterCoils.length) return;
-    }
-    if(waterCoils.length === 0 && allLoops.length === 0){
-      const empty = document.createElement('div');
-      empty.style.cssText = "font-size:12px;color:var(--text-dim);padding:8px 0;";
-      empty.textContent = "No fluid loops or water-side coils found in this file.";
-      wrap.appendChild(empty);
-      return;
+      var noLoops = document.createElement('div');
+      noLoops.style.cssText = "border:1px solid var(--edited);border-radius:var(--radius-2);padding:10px 14px;font-size:12px;color:var(--edited);";
+      noLoops.textContent = "No fluid loops defined — create them in the Create Water-Side step first.";
+      rightEl.appendChild(noLoops);
+    } else {
+      allLoops.forEach(function(loop){ rightEl.appendChild(makeLoopCard(loop)); });
     }
 
-    const fss = "background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:var(--radius-2);font-family:var(--mono);font-size:12px;";
-    const coilsShown = new Set();
-
-    // ── One card per loop, showing source equipment + demand coils ──
-    for(const loop of allLoops){
-      const loopType = loop.attrs.Type;
-      const dropColor = loopType === "ChilledWater" ? "#5b9bd5" : loopType === "HotWater" ? "#e05050" : "#38a169";
-
-      const compatCoils = waterCoils.filter(c => {
-        if(loopType === "ChilledWater")    return c.attrs.Type === "ChilledWater";
-        if(loopType === "HotWater")        return c.attrs.Type === "HotWater";
-        if(loopType === "CondenserWater")  return c.attrs.CndsrType === "WaterSource";
-        return false;
+    // Coils with no matching loop type
+    var unmatchedCoils = waterCoils.filter(function(c){
+      var lt = coilLoopType(c);
+      return !lt || !allLoops.some(function(l){ return l.attrs.Type === lt; });
+    });
+    if(unmatchedCoils.length > 0){
+      var umCard = document.createElement('div');
+      umCard.style.cssText = "border:1px solid var(--edited);border-left:3px solid var(--edited);border-radius:var(--radius-2);background:var(--panel);overflow:hidden;";
+      var umHdr = document.createElement('div');
+      umHdr.style.cssText = "padding:8px 14px;background:var(--panel2);font-family:var(--mono);font-size:12px;font-weight:600;color:var(--edited);";
+      umHdr.textContent = "Coils with no matching loop type";
+      umCard.appendChild(umHdr);
+      unmatchedCoils.forEach(function(coil){
+        var sys = wsParentSysOfCoil(coil);
+        var lt = coilLoopType(coil) || "?";
+        var row = document.createElement('div');
+        row.style.cssText = "display:flex;align-items:center;padding:6px 14px;gap:8px;border-top:1px solid var(--border);font-family:var(--mono);font-size:11px;";
+        row.innerHTML = wsDropSvg(lt, 12)
+          + '<span>' + (sys ? '<strong>'+sys.name+'</strong> &rsaquo; ' : '') + coil.name + '</span>'
+          + '<span style="margin-left:auto;color:var(--edited);font-size:10.5px;">Create a '+lt+' loop in step 7</span>';
+        umCard.appendChild(row);
       });
-      compatCoils.forEach(c => coilsShown.add(c));
+      rightEl.appendChild(umCard);
+    }
 
-      const directEquip = getLoopChildren(doc, loop).filter(r => ["Chlr","Blr","HtPump","HtRej"].includes(r.type));
-      let sourceEquip = directEquip;
-      let cwLoadEquip = [], cwHtRejEquip = [];
-      if(loopType === "CondenserWater"){
-        const {priSup, priRet} = wsSegsOf(loop);
-        const cwSegNames = new Set([priSup&&priSup.name, priRet&&priRet.name].filter(Boolean));
-        cwLoadEquip = doc.records.filter(r => {
-          if(r.type==="Chlr")   return cwSegNames.has(r.attrs.CndsrFluidSegInRef) || cwSegNames.has(r.attrs.CndsrFluidSegOutRef);
-          if(r.type==="HtPump") return cwSegNames.has(r.attrs.SrcFluidSegInRef) || cwSegNames.has(r.attrs.SrcFluidSegOutRef);
-          return false;
-        });
-        cwHtRejEquip = directEquip.filter(r => r.type === "HtRej");
-        sourceEquip = [];
+    // ── Unassigned-coil chip (left panel) ────────────────────────────
+    function makeCoilChip(coil){
+      var isSel = selectedCoils.has(coil.name);
+      var sys = wsParentSysOfCoil(coil);
+      var chip = document.createElement('div');
+      chip.draggable = true;
+      chip.dataset.coilName = coil.name;
+      chip.style.cssText = "font-family:var(--mono);font-size:11px;background:"
+        + (isSel ? "var(--color-accent-wash)" : "var(--panel2)")
+        + ";border:1px solid " + (isSel ? "var(--accent)" : "var(--border)")
+        + ";border-radius:3px;padding:3px 8px;cursor:grab;user-select:none;display:flex;align-items:center;gap:6px;white-space:nowrap;";
+      var kindBadge = document.createElement('span');
+      kindBadge.style.cssText = "font-size:9.5px;background:var(--panel);border:1px solid var(--border);border-radius:3px;padding:1px 4px;flex-shrink:0;color:var(--text-dim);";
+      kindBadge.textContent = coilTypeLabel(coil);
+      chip.appendChild(kindBadge);
+      var nameSpan = document.createElement('span');
+      nameSpan.style.cssText = "overflow:hidden;text-overflow:ellipsis;max-width:120px;";
+      nameSpan.textContent = sys ? sys.name : coil.name;
+      nameSpan.title = coil.name;
+      chip.appendChild(nameSpan);
+      if(sys){
+        var sub = document.createElement('span');
+        sub.style.cssText = "font-size:10px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;max-width:80px;";
+        sub.textContent = "› " + coil.name;
+        sub.title = coil.name;
+        chip.appendChild(sub);
       }
-      const {sup: thisSup} = wsSegsOf(loop);
-      const allSameType = allLoops.filter(l => l.attrs.Type === loopType);
-      const wiredToThis = compatCoils.filter(c => thisSup && c.attrs.FluidSegInRef === thisSup.name);
+      chip.addEventListener('click', function(e){
+        if(e.ctrlKey || e.metaKey){
+          e.preventDefault();
+          if(selectedCoils.has(coil.name)) selectedCoils.delete(coil.name);
+          else selectedCoils.add(coil.name);
+          render();
+        }
+      });
+      chip.addEventListener('dragstart', function(e){
+        var payload;
+        if(selectedCoils.has(coil.name) && selectedCoils.size > 1){
+          payload = JSON.stringify(Array.from(selectedCoils));
+        } else {
+          selectedCoils.clear(); selectedCoils.add(coil.name);
+          payload = coil.name;
+        }
+        e.dataTransfer.setData('text/plain', payload);
+        e.dataTransfer.effectAllowed = 'move';
+        setTimeout(function(){ if(chip.isConnected) chip.style.opacity = '0.4'; }, 0);
+      });
+      chip.addEventListener('dragend', function(){ if(chip.isConnected) chip.style.opacity = ''; });
+      return chip;
+    }
 
-      // For CW loops: each coil only appears on the card it's wired to, or on ALL cards if unassigned.
-      // Also gather WSHP parent systems as load chips for the CW loads panel.
-      let visibleCompatCoils = compatCoils;
-      let cwWshpSystems = [];
-      if(loopType === "CondenserWater"){
-        visibleCompatCoils = compatCoils.filter(c => {
-          const cl = wsCoilCurrentLoop(c);
-          return !cl || (thisSup && c.attrs.FluidSegInRef === thisSup.name);
-        });
-        const seen = new Set();
-        wiredToThis.forEach(c => {
-          const s = wsParentSysOfCoil(c);
-          if(s && !seen.has(s.name)){ seen.add(s.name); cwWshpSystems.push(s); }
-        });
-        cwLoadEquip = [...cwLoadEquip, ...cwWshpSystems];
-      }
+    // ── Assigned-coil chip (right panel drop zone) ───────────────────
+    function makeAssignedCoilChip(coil, loop){
+      var sys = wsParentSysOfCoil(coil);
+      var aChip = document.createElement('div');
+      aChip.draggable = true;
+      aChip.style.cssText = "display:inline-flex;align-items:center;gap:4px;font-family:var(--mono);font-size:11px;background:var(--panel2);border:1px solid var(--border);border-radius:3px;padding:2px 4px 2px 7px;cursor:grab;white-space:nowrap;";
+      var aKind = document.createElement('span');
+      aKind.style.cssText = "font-size:9.5px;background:var(--panel);border:1px solid var(--border);border-radius:3px;padding:1px 4px;color:var(--text-dim);flex-shrink:0;";
+      aKind.textContent = coilTypeLabel(coil);
+      aChip.appendChild(aKind);
+      var aName = document.createElement('span');
+      aName.style.cssText = "overflow:hidden;text-overflow:ellipsis;max-width:200px;";
+      aName.textContent = (sys ? sys.name + " › " : "") + coil.name;
+      aName.title = coil.name;
+      aChip.appendChild(aName);
+      var xBtn = document.createElement('button');
+      xBtn.style.cssText = "border:none;background:none;cursor:pointer;color:var(--text-dim);font-size:13px;padding:0 2px;line-height:1;";
+      xBtn.textContent = "×";
+      xBtn.title = "Disconnect from this loop";
+      xBtn.addEventListener('click', function(e){ e.stopPropagation(); wsWireCoilToLoop(coil, null); updateStatus(); render(); });
+      aChip.appendChild(xBtn);
+      aChip.addEventListener('dragstart', function(e){
+        e.dataTransfer.setData('text/plain', coil.name);
+        e.dataTransfer.effectAllowed = 'move';
+        setTimeout(function(){ if(aChip.isConnected) aChip.style.opacity = '0.4'; }, 0);
+      });
+      aChip.addEventListener('dragend', function(){ if(aChip.isConnected) aChip.style.opacity = ''; });
+      return aChip;
+    }
 
-      const card = document.createElement('div');
-      card.style.cssText = "border:1px solid var(--border);border-left:3px solid "+dropColor+";border-radius:var(--radius-2);background:var(--panel);margin-bottom:16px;overflow:hidden;";
+    // ── Loop card ────────────────────────────────────────────────────
+    function makeLoopCard(loop){
+      var loopType = loop.attrs.Type;
+      var dropColor = loopType === "ChilledWater" ? "#5b9bd5" : loopType === "HotWater" ? "#e05050" : "#38a169";
+      var thisSup = wsSegsOf(loop).sup;
+      var assignedHere = waterCoils.filter(function(c){
+        return coilCompatibleWithLoop(c, loop) && thisSup && c.attrs.FluidSegInRef === thisSup.name;
+      });
+      var totalCompat = waterCoils.filter(function(c){ return coilCompatibleWithLoop(c, loop); }).length;
 
-      // Loop header
-      const hdr = document.createElement('div');
+      var card = document.createElement('div');
+      card.style.cssText = "border:1px solid var(--border);border-left:3px solid "+dropColor+";border-radius:var(--radius-2);background:var(--panel);overflow:hidden;";
+
+      // Header
+      var hdr = document.createElement('div');
       hdr.style.cssText = "padding:10px 14px;background:var(--panel2);display:flex;align-items:center;gap:10px;";
-      const hdrCoilLabel = loopType === "CondenserWater"
-        ? `${wiredToThis.length} of ${compatCoils.length} WSHP coils here`
-        : `${wiredToThis.length}/${compatCoils.length} coils wired`;
-      const hdrColor = wiredToThis.length === compatCoils.length && compatCoils.length > 0 ? "var(--color-accent-ink)" : "var(--text-dim)";
+      var hdrColor = assignedHere.length === totalCompat && totalCompat > 0 ? "var(--color-accent-ink)" : "var(--text-dim)";
       hdr.innerHTML = wsDropSvg(loopType, 16)
-        + `<span style="font-family:var(--mono);font-size:13px;font-weight:600;">${loop.name}</span>`
-        + `<span style="font-size:10px;font-family:var(--mono);color:var(--text-dim);background:var(--panel);border:1px solid var(--border);padding:1px 7px;border-radius:3px;">${loopType}</span>`
-        + `<span style="margin-left:auto;font-size:11px;color:${hdrColor};">${hdrCoilLabel}</span>`;
+        + '<span style="font-family:var(--mono);font-size:13px;font-weight:600;">'+loop.name+'</span>'
+        + '<span style="font-size:10px;font-family:var(--mono);color:var(--text-dim);background:var(--panel);border:1px solid var(--border);padding:1px 7px;border-radius:3px;">'+loopType+'</span>'
+        + '<span style="margin-left:auto;font-size:11px;color:'+hdrColor+';">'+assignedHere.length+'/'+totalCompat+' coils</span>';
       card.appendChild(hdr);
 
-      function makeEquipChip(eq, chipDropColor){
-        let detail = "", useDrop = true;
-        if(eq.type==="Chlr")    detail = (eq.attrs.Type||"Scroll") + (eq.attrs.CndsrType==="Fluid"?" water-cooled":" air-cooled");
-        else if(eq.type==="Blr") detail = (eq.attrs.FuelSrc||"Gas") + (eq.attrs.DraftType?" "+eq.attrs.DraftType:"") + " boiler";
-        else if(eq.type==="HtPump") detail = (eq.attrs.SrcFluidSegInRef?"Water-source":"Air-source")+" HP";
-        else if(eq.type==="HtRej") detail = eq.attrs.Type||"OpenTower";
-        else if(eq.type==="AirSys"||eq.type==="ZnSys"){ detail = "WSHP zone"; useDrop = false; }
-        const chip = document.createElement('div');
-        chip.style.cssText = "display:inline-flex;align-items:center;gap:5px;background:var(--panel2);border:1px solid var(--border);border-radius:var(--radius-2);padding:3px 9px;font-family:var(--mono);font-size:11px;white-space:nowrap;";
-        const icon = useDrop ? wsDropSvg(chipDropColor||loopType, 11) : `<span style="font-size:11px;color:var(--text-dim);">&#9670;</span>`;
-        chip.innerHTML = icon
-          + `<span style="font-weight:600;">${eq.name}</span>`
-          + `<span style="color:var(--text-dim);"> &middot; ${detail}</span>`;
-        return chip;
-      }
-
+      // Source equipment row (read-only info)
+      var sourceEquip = getLoopChildren(doc, loop).filter(function(r){ return ["Chlr","Blr","HtPump","HtRej"].includes(r.type); });
       if(loopType === "CondenserWater"){
-        // Two-column: LOADS | HEAT REJECTION
-        const twoCol = document.createElement('div');
-        twoCol.style.cssText = "display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--border);";
-
-        function makeCwPanel(title, equipList, chipColor, emptyMsg){
-          const panel = document.createElement('div');
-          panel.style.cssText = "padding:8px 14px;";
-          const lbl = document.createElement('div');
-          lbl.style.cssText = "font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--text-dim);margin-bottom:6px;";
-          lbl.textContent = title;
-          panel.appendChild(lbl);
-          if(equipList.length === 0){
-            const empty = document.createElement('span');
-            empty.style.cssText = "font-size:11px;color:var(--edited);";
-            empty.textContent = emptyMsg;
-            panel.appendChild(empty);
-          } else {
-            const chips = document.createElement('div');
-            chips.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;";
-            equipList.forEach(eq => chips.appendChild(makeEquipChip(eq, chipColor)));
-            panel.appendChild(chips);
-          }
-          return panel;
-        }
-
-        const rejPanel   = makeCwPanel("Heat rejection (remove heat)", cwHtRejEquip, "CondenserWater", "No tower — add in Create Water-Side step.");
-        const loadsPanel = makeCwPanel("Loads (add heat to CW)", cwLoadEquip, "CondenserWater", "None — add water-cooled chiller or WSHP.");
-        loadsPanel.style.cssText += "border-left:1px solid var(--border);";
-        twoCol.appendChild(rejPanel);
-        twoCol.appendChild(loadsPanel);
-        card.appendChild(twoCol);
-      } else {
-        // CHW / HHW: single SOURCE row
-        const srcRow = document.createElement('div');
-        srcRow.style.cssText = "padding:8px 14px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap;";
-        const srcLbl = document.createElement('div');
-        srcLbl.style.cssText = "font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--text-dim);line-height:24px;flex-shrink:0;white-space:nowrap;min-width:52px;";
-        srcLbl.textContent = "Source";
-        srcRow.appendChild(srcLbl);
-        if(sourceEquip.length === 0){
-          const noEq = document.createElement('span');
-          noEq.style.cssText = "font-size:11px;color:var(--edited);line-height:24px;";
-          noEq.textContent = "No equipment -- add in Create Water-Side step.";
-          srcRow.appendChild(noEq);
-        } else {
-          const chips = document.createElement('div');
-          chips.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;";
-          sourceEquip.forEach(eq => chips.appendChild(makeEquipChip(eq, loopType)));
-          srcRow.appendChild(chips);
-        }
-        card.appendChild(srcRow);
+        // Also add water-cooled chillers / WSHPs that reference this CW loop
+        var ch2 = getLoopChildren(doc, loop);
+        var priSup = ch2.find(function(r){ return r.type==="FluidSeg" && r.attrs.Type==="PrimarySupply"; });
+        var priRet = ch2.find(function(r){ return r.type==="FluidSeg" && r.attrs.Type==="PrimaryReturn"; });
+        var cwNames = new Set([priSup&&priSup.name, priRet&&priRet.name].filter(Boolean));
+        var crossRef = doc.records.filter(function(r){
+          if(r.type==="Chlr")   return cwNames.has(r.attrs.CndsrFluidSegInRef) || cwNames.has(r.attrs.CndsrFluidSegOutRef);
+          if(r.type==="HtPump") return cwNames.has(r.attrs.SrcFluidSegInRef)   || cwNames.has(r.attrs.SrcFluidSegOutRef);
+          return false;
+        });
+        var seenEq = new Set(sourceEquip.map(function(e){ return e.name; }));
+        crossRef.forEach(function(r){ if(!seenEq.has(r.name)){ sourceEquip.push(r); seenEq.add(r.name); } });
       }
+      var srcRow = document.createElement('div');
+      srcRow.style.cssText = "padding:7px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;";
+      var srcLbl = document.createElement('span');
+      srcLbl.style.cssText = "font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--text-dim);flex-shrink:0;min-width:50px;";
+      srcLbl.textContent = loopType === "CondenserWater" ? "Equipment" : "Source";
+      srcRow.appendChild(srcLbl);
+      if(sourceEquip.length === 0){
+        var noEq = document.createElement('span');
+        noEq.style.cssText = "font-size:11px;color:var(--edited);";
+        noEq.textContent = "No equipment — add in Create Water-Side step.";
+        srcRow.appendChild(noEq);
+      } else {
+        sourceEquip.forEach(function(eq){
+          var eChip = document.createElement('span');
+          eChip.style.cssText = "display:inline-flex;align-items:center;gap:4px;background:var(--panel2);border:1px solid var(--border);border-radius:var(--radius-1);padding:2px 7px;font-family:var(--mono);font-size:10.5px;";
+          var eType = eq.type==="Chlr"?"Chiller":eq.type==="Blr"?"Boiler":eq.type==="HtRej"?"Tower":"HtPump";
+          eChip.textContent = eq.name + " · " + eType;
+          srcRow.appendChild(eChip);
+        });
+      }
+      card.appendChild(srcRow);
 
-      // Demand coils section
-      const demLbl = document.createElement('div');
+      // Demand coils drop zone
+      var demLbl = document.createElement('div');
       demLbl.style.cssText = "padding:7px 14px 4px;font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--text-dim);";
       demLbl.textContent = loopType === "CondenserWater" ? "WSHP zone coils" : "Demand coils";
       card.appendChild(demLbl);
 
-      if(visibleCompatCoils.length === 0){
-        const noc = document.createElement('div');
-        noc.style.cssText = "padding:4px 14px 10px;font-size:11px;color:var(--text-dim);";
-        noc.textContent = loopType === "CondenserWater" ? "All WSHP coils assigned to other CW loops." : "No compatible coils in this file.";
-        card.appendChild(noc);
-      } else {
-        visibleCompatCoils.forEach(coil => {
-          const sys = wsParentSysOfCoil(coil);
-          const curLoop = wsCoilCurrentLoop(coil);
-          const wiredHere = thisSup && coil.attrs.FluidSegInRef === thisSup.name;
-          const coilKind = coil.type === "CoilClg" ? "Clg" : "Htg";
-
-          const row = document.createElement('div');
-          row.style.cssText = "display:flex;align-items:center;padding:5px 14px;gap:10px;border-top:1px solid var(--border);";
-
-          const lbl = document.createElement('div');
-          lbl.style.cssText = "flex:1;min-width:0;display:flex;align-items:center;gap:7px;";
-          const kindBadge = document.createElement('span');
-          kindBadge.style.cssText = "font-size:10px;font-family:var(--mono);color:var(--text-dim);background:var(--panel);border:1px solid var(--border);padding:1px 5px;border-radius:3px;flex-shrink:0;";
-          kindBadge.textContent = coilKind;
-          const nameSpan = document.createElement('span');
-          nameSpan.style.cssText = "font-family:var(--mono);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
-          nameSpan.innerHTML = sys
-            ? `<strong>${sys.name}</strong> <span style="color:var(--text-dim);">&rsaquo; ${coil.name}</span>`
-            : `<span style="color:var(--text-dim);">${coil.name}</span>`;
-          lbl.appendChild(kindBadge); lbl.appendChild(nameSpan);
-
-          const ctrl = document.createElement('div');
-          ctrl.style.cssText = "display:flex;align-items:center;gap:8px;flex-shrink:0;";
-          const sel = document.createElement('select');
-          sel.style.cssText = fss + "min-width:140px;";
-          sel.innerHTML = '<option value="">-- not connected --</option>'
-            + allSameType.map(l => `<option value="${l.name}"${curLoop&&curLoop.name===l.name?" selected":""}>${l.name}</option>`).join("");
-          sel.addEventListener('change', () => {
-            const tgt = allSameType.find(l => l.name === sel.value) || null;
-            wsWireCoilToLoop(coil, tgt); updateStatus(); renderAll();
-          });
-          const indicator = document.createElement('span');
-          indicator.style.cssText = "min-width:20px;text-align:center;";
-          if(wiredHere){
-            indicator.style.cssText += "font-size:12px;color:var(--color-accent-ink);";
-            indicator.textContent = "✓";
-          } else if(curLoop){
-            indicator.style.cssText += "font-size:10px;color:var(--text-dim);white-space:nowrap;";
-            indicator.textContent = "→ " + curLoop.name;
-          } else {
-            indicator.style.cssText += "font-size:12px;color:var(--edited);";
-            indicator.textContent = "✗";
-          }
-          ctrl.appendChild(sel); ctrl.appendChild(indicator);
-          row.appendChild(lbl); row.appendChild(ctrl);
-          card.appendChild(row);
+      var dropZone = document.createElement('div');
+      dropZone.style.cssText = "padding:8px 14px 12px;display:flex;flex-wrap:wrap;gap:6px;min-height:52px;";
+      wireDrop2(dropZone, true, function(payload){
+        var names = parseDropCoils(payload);
+        var changed = false;
+        names.forEach(function(n){
+          var coil = waterCoils.find(function(c){ return c.name === n; });
+          if(coil && coilCompatibleWithLoop(coil, loop)){ wsWireCoilToLoop(coil, loop); changed = true; }
         });
-      }
-      wrap.appendChild(card);
-    }
-
-    // ── Coils with no matching loop type ───────────────────────────
-    const unshown = waterCoils.filter(c => !coilsShown.has(c));
-    if(unshown.length > 0){
-      const card = document.createElement('div');
-      card.style.cssText = "border:1px solid var(--border);border-left:3px solid var(--edited);border-radius:var(--radius-2);background:var(--panel);margin-bottom:14px;overflow:hidden;";
-      const hdr = document.createElement('div');
-      hdr.style.cssText = "padding:8px 14px;background:var(--panel2);font-family:var(--mono);font-size:12px;font-weight:600;color:var(--edited);";
-      hdr.textContent = "Coils with no matching loop type";
-      card.appendChild(hdr);
-      unshown.forEach(coil => {
-        const sys = wsParentSysOfCoil(coil);
-        const loopTypeNeeded = coil.attrs.Type === "ChilledWater" ? "ChilledWater" : coil.attrs.Type === "HotWater" ? "HotWater" : "CondenserWater";
-        const row = document.createElement('div');
-        row.style.cssText = "display:flex;align-items:center;padding:6px 14px;gap:8px;border-top:1px solid var(--border);font-family:var(--mono);font-size:11px;";
-        row.innerHTML = wsDropSvg(loopTypeNeeded, 12)
-          + `<span>${sys?"<strong>"+sys.name+"</strong> &rsaquo; ":""}${coil.name}</span>`
-          + `<span style="margin-left:auto;color:var(--edited);font-size:10.5px;">Create a ${loopTypeNeeded} loop in step 7</span>`;
-        card.appendChild(row);
+        selectedCoils.clear();
+        if(changed){ updateStatus(); render(); }
       });
-      wrap.appendChild(card);
+
+      if(assignedHere.length === 0){
+        var hint = document.createElement('div');
+        hint.style.cssText = "font-size:11px;color:var(--text-dim);padding:8px 0;font-style:italic;width:100%;";
+        hint.textContent = "Drop coils here to connect";
+        dropZone.appendChild(hint);
+      } else {
+        assignedHere.forEach(function(coil){ dropZone.appendChild(makeAssignedCoilChip(coil, loop)); });
+      }
+      card.appendChild(dropZone);
+      return card;
     }
   }
 
-  renderAll();
+  render();
 }
 
 /* =======================================================================
@@ -6693,9 +6885,18 @@ renderStepDetail(WORKFLOW_STEPS[0]);
 .vp-entry ul { margin: 5px 0 0; padding-left: 16px; color: var(--ink-muted, #6E737B); line-height: 1.65; }
 </style>
 
-<div id="ver-badge">v1.10.0</div>
+<div id="ver-badge">v1.11.0</div>
 <div id="ver-panel">
   <div class="vp-title">Changelog</div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.11.0</span><span class="vp-date">2026-08-05</span>
+    <ul>
+      <li>Assign Water-Side Coils: replaced per-coil dropdowns with two-panel drag-and-drop, mirroring Assign Zones &amp; Systems</li>
+      <li>Left panel shows all globally unassigned coils grouped by type (CHW / HHW / CW) with multi-select (ctrl-click, lasso, select-all) and name + type filters</li>
+      <li>Right panel shows one loop card per fluid loop; drag one or many coils onto a loop to wire them, click × to disconnect</li>
+      <li>Assigned-coil chips in loop cards are draggable back to the unassigned panel</li>
+    </ul>
+  </div>
   <div class="vp-entry">
     <span class="vp-ver">v1.10.0</span><span class="vp-date">2026-08-05</span>
     <ul>
