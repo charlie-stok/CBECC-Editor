@@ -5136,536 +5136,372 @@ function wsEquipSummaryStr(loop){
 function renderCreateWaterSideForm(container){
   if(!doc){ container.innerHTML = '<div class="warn-line">Load a file first.</div>'; return; }
 
-  let currentDetail = null;
+  // ── Modal (appended to container so it auto-cleans on step nav) ──
+  let modalEl = null;
+  function openModal(buildFn){
+    if(modalEl) modalEl.remove();
+    modalEl = document.createElement('div');
+    modalEl.style.cssText = "position:fixed;top:0;left:0;right:0;bottom:0;z-index:9999;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;";
+    const box = document.createElement('div');
+    box.style.cssText = "background:var(--panel);border:1px solid var(--border);border-radius:var(--radius-2);padding:18px 20px;min-width:320px;max-width:480px;max-height:85vh;overflow-y:auto;position:relative;box-shadow:0 8px 32px rgba(0,0,0,0.28);";
+    const xBtn = document.createElement('button');
+    xBtn.textContent = "×"; xBtn.style.cssText = "position:absolute;top:8px;right:10px;background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-dim);padding:0 4px;line-height:1;";
+    xBtn.addEventListener('click', closeModal);
+    box.appendChild(xBtn);
+    buildFn(box);
+    modalEl.appendChild(box);
+    container.appendChild(modalEl);
+    modalEl.addEventListener('click', e => { if(e.target === modalEl) closeModal(); });
+  }
+  function closeModal(){ if(modalEl){ modalEl.remove(); modalEl = null; } }
 
-  function renderAll(){ container.innerHTML = ""; if(currentDetail) renderDetail(currentDetail); else renderList(); }
-
-  function renderList(){
-    const wrap = document.createElement('div');
-    wrap.style.cssText = "max-width:700px;";
-    container.appendChild(wrap);
-
-    const hasChW  = doc.records.some(r => r.type === "CoilClg" && r.attrs.Type === "ChilledWater");
-    const hasHW   = doc.records.some(r => r.type === "CoilHtg" && r.attrs.Type === "HotWater");
+  // ── Button smart states ────────────────────────────────────────
+  function needsAutoCreateLoops(){
+    const hasChW  = doc.records.some(r => r.type==="CoilClg" && r.attrs.Type==="ChilledWater");
+    const hasHW   = doc.records.some(r => r.type==="CoilHtg" && r.attrs.Type==="HotWater");
     const hasWshp = doc.records.some(r => (r.type==="CoilClg"||r.type==="CoilHtg") && r.attrs.CndsrType==="WaterSource");
-    const hasChWL = doc.records.some(r => r.type === "FluidSys" && r.attrs.Type === "ChilledWater");
-    const hasHWL  = doc.records.some(r => r.type === "FluidSys" && r.attrs.Type === "HotWater");
-    const hasCWL  = doc.records.some(r => r.type === "FluidSys" && r.attrs.Type === "CondenserWater");
-    const needsLoops = (hasChW && !hasChWL) || (hasHW && !hasHWL) || (hasWshp && !hasCWL);
+    const hasChWL = doc.records.some(r => r.type==="FluidSys" && r.attrs.Type==="ChilledWater");
+    const hasHWL  = doc.records.some(r => r.type==="FluidSys" && r.attrs.Type==="HotWater");
+    const hasCWL  = doc.records.some(r => r.type==="FluidSys" && r.attrs.Type==="CondenserWater");
+    return (hasChW && !hasChWL) || (hasHW && !hasHWL) || (hasWshp && !hasCWL);
+  }
+  function needsAutoWireCoils(){
+    const loops = doc.records.filter(r => r.type==="FluidSys" && r.attrs.Type !== "ServiceHotWater");
+    if(!loops.length) return false;
+    return wsGetWaterCoils().some(c => !wsCoilCurrentLoop(c));
+  }
+  function needsAutoSHW(){
+    const spcs = doc.records.filter(r => r.type==="Spc");
+    if(!spcs.length) return false;
+    const shwLoop = doc.records.find(r => r.type==="FluidSys" && r.attrs.Type==="ServiceHotWater");
+    if(!shwLoop) return true;
+    const shwSup = getLoopChildren(doc, shwLoop).find(r => r.type==="FluidSeg" && r.attrs.Type==="PrimarySupply");
+    if(!shwSup) return true;
+    return spcs.some(spc => spc.attrs.SHWFluidSegRef !== shwSup.name);
+  }
 
-    if(needsLoops){
-      const needed = [];
-      if(hasChW && !hasChWL)  needed.push("CHW — ChilledWater");
-      if(hasHW  && !hasHWL)   needed.push("HHW — HotWater");
-      if(hasWshp && !hasCWL)  needed.push("CW — CondenserWater");
-      const banner = document.createElement('div');
-      banner.style.cssText = "border:1px solid var(--border);border-radius:var(--radius-2);background:var(--panel);padding:12px 14px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;";
-      banner.innerHTML = `<div><div style="font-family:var(--mono);font-size:12px;font-weight:600;margin-bottom:4px;">Fluid loops needed</div><div style="font-size:11px;color:var(--text-dim);">Detected coil types without a matching loop: <strong>${needed.join(" &middot; ")}</strong></div></div><button class="btn primary" id="autoBtn" style="white-space:nowrap;flex-shrink:0;">Auto-create defaults</button>`;
-      wrap.appendChild(banner);
-      banner.querySelector('#autoBtn').addEventListener('click', () => { autoCreatePlantLoops(doc); updateStatus(); renderAll(); });
-    }
-
-    const fluidLoops = doc.records.filter(r => r.type === "FluidSys");
-    if(!fluidLoops.length && !needsLoops){
-      const e = document.createElement('div');
-      e.style.cssText = "font-size:12px;color:var(--text-dim);padding:8px 0;";
-      e.textContent = "No fluid loops — no water-side coils detected in this file.";
-      wrap.appendChild(e);
-    }
-
-    for(const loop of fluidLoops){
-      const isSHW = loop.attrs.Type === "ServiceHotWater";
-      const ch = getLoopChildren(doc, loop);
-      const card = document.createElement('div');
-      card.style.cssText = "border:1px solid var(--border);border-radius:var(--radius-2);background:var(--panel);padding:12px 14px;margin-bottom:10px;";
-      const dropColor = loop.attrs.Type === "ChilledWater" ? "#5b9bd5" : loop.attrs.Type === "HotWater" ? "#e05050" : loop.attrs.Type === "CondenserWater" ? "#38a169" : "#d97706";
-      card.style.borderLeft = "3px solid " + dropColor;
-      const labelStyle = "font-size:9px;letter-spacing:0.07em;text-transform:uppercase;font-family:var(--mono);color:var(--ink-faint);min-width:58px;padding-top:1px;flex-shrink:0;";
-      let srcText, pumpText, demandText, demandOk;
-      if(isSHW){
-        const shwSup = ch.find(r => r.type === "FluidSeg" && r.attrs.Type === "PrimarySupply");
-        const assignedSpcs = shwSup ? doc.records.filter(r => r.type === "Spc" && r.attrs.SHWFluidSegRef === shwSup.name).length : 0;
-        const totalSpcs = doc.records.filter(r => r.type === "Spc").length;
-        srcText = wsEquipSummaryStr(loop);
-        pumpText = "";
-        demandText = totalSpcs > 0 ? assignedSpcs + "/" + totalSpcs + " spaces assigned" : "no spaces in file";
-        demandOk = totalSpcs === 0 || assignedSpcs === totalSpcs;
-      } else {
-        const mode = getLoopPumpingMode(ch);
-        const pumps = ch.filter(r => r.type === "Pump");
-        const {wired, total} = wsLoopWiringStatus(loop);
-        demandOk = total === 0 || wired === total;
-        srcText = wsEquipSummaryStr(loop);
-        pumpText = (mode === "PrimarySecondary" ? "Primary-Secondary" : "Primary-only") + " &nbsp;&middot;&nbsp; " + pumps.length + " pump" + (pumps.length !== 1 ? "s" : "");
-        demandText = total > 0 ? wired + "/" + total + " coils auto-wired" : "no compatible coils in file";
-      }
-      const demandColor = demandOk ? "var(--color-accent-ink)" : "var(--edited)";
-      const demandIcon = demandOk && !isSHW ? " &#10003;" : "";
-      card.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
-        <div style="flex:1;min-width:0;">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">${wsDropSvg(loop.attrs.Type, 14)}<span style="font-family:var(--mono);font-size:13px;font-weight:600;">${loop.name}</span><span style="font-size:10px;font-family:var(--mono);color:var(--text-dim);background:var(--panel2);border:1px solid var(--border);padding:1px 7px;border-radius:3px;">${loop.attrs.Type}</span></div>
-          <div style="display:flex;flex-direction:column;gap:3px;border-top:1px solid var(--border);padding-top:7px;">
-            <div style="display:flex;align-items:baseline;gap:6px;"><span style="${labelStyle}">Sources</span><span style="font-size:11px;color:var(--text-dim);">${srcText}${pumpText ? " &nbsp;&middot;&nbsp; <span style='color:var(--text-dim);'>" + pumpText + "</span>" : ""}</span></div>
-            <div style="display:flex;align-items:baseline;gap:6px;"><span style="${labelStyle}">Demands</span><span style="font-size:11px;color:${demandColor};">${demandText}${demandIcon}</span></div>
-          </div>
-        </div>
-        <div style="display:flex;gap:6px;flex-shrink:0;margin-top:2px;"><button class="btn primary" data-edit="${loop.name}" style="font-size:11px;padding:4px 10px;">Edit &#8594;</button><button class="btn" data-del="${loop.name}" style="font-size:11px;padding:4px 8px;">Delete</button></div>
-      </div>`;
-      wrap.appendChild(card);
-    }
-    wrap.querySelectorAll('button[data-edit]').forEach(btn => {
-      btn.addEventListener('click', () => { const l = doc.records.find(r => r.type === "FluidSys" && r.name === btn.dataset.edit); if(l){ currentDetail = l; renderAll(); } });
+  // ── Auto-actions ───────────────────────────────────────────────
+  function autoWireAllCoils(){
+    const wc = wsGetWaterCoils();
+    const allLoops = doc.records.filter(r => r.type==="FluidSys" && r.attrs.Type !== "ServiceHotWater");
+    wc.forEach(coil => {
+      if(wsCoilCurrentLoop(coil)) return;
+      let tgt = null;
+      if(coil.attrs.Type==="ChilledWater")          tgt = allLoops.find(l => l.attrs.Type==="ChilledWater");
+      else if(coil.attrs.Type==="HotWater")         tgt = allLoops.find(l => l.attrs.Type==="HotWater");
+      else if(coil.attrs.CndsrType==="WaterSource") tgt = allLoops.find(l => l.attrs.Type==="CondenserWater");
+      if(tgt) wsWireCoilToLoop(coil, tgt);
     });
-    wrap.querySelectorAll('button[data-del]').forEach(btn => {
-      btn.addEventListener('click', () => { const l = doc.records.find(r => r.type === "FluidSys" && r.name === btn.dataset.del); if(l){ deleteFluidLoop(doc, l); updateStatus(); renderAll(); } });
+    updateStatus();
+  }
+  function autoCreateWireSHW(){
+    let shwLoop = doc.records.find(r => r.type==="FluidSys" && r.attrs.Type==="ServiceHotWater");
+    if(!shwLoop) shwLoop = createFluidLoop(doc, "ServiceHotWater", "SHW", {});
+    const shwSup = getLoopChildren(doc, shwLoop).find(r => r.type==="FluidSeg" && r.attrs.Type==="PrimarySupply");
+    if(!shwSup) return;
+    doc.records.filter(r => r.type==="Spc").forEach(spc => {
+      if(spc.attrs.SHWFluidSegRef !== shwSup.name){ setPlainAttr(spc,"SHWFluidSegRef",shwSup.name); dirtyRecords.add(spc); }
     });
+    updateStatus();
+  }
 
-    const fs = "background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius-2);font-family:var(--mono);font-size:12px;";
-    const addCard = document.createElement('div');
-    addCard.style.cssText = "border:1px dashed var(--border);border-radius:var(--radius-2);padding:10px 14px;margin-top:4px;";
-    addCard.innerHTML = `<div style="font-family:var(--mono);font-size:10.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:8px;">Add loop</div><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;"><input type="text" id="nlName" placeholder="Loop name" style="${fs}width:160px;"><select id="nlType" style="${fs}"><option value="ChilledWater">ChilledWater</option><option value="HotWater">HotWater</option><option value="CondenserWater">CondenserWater</option><option value="ServiceHotWater">ServiceHotWater</option></select><button class="btn primary" id="nlAdd">Add</button><span id="nlMsg" style="font-size:11px;color:var(--text-dim);"></span></div>`;
-    wrap.appendChild(addCard);
-    addCard.querySelector('#nlAdd').addEventListener('click', () => {
-      const name = addCard.querySelector('#nlName').value.trim();
-      const type = addCard.querySelector('#nlType').value;
-      const msg  = addCard.querySelector('#nlMsg');
-      if(!name){ msg.textContent = "Enter a name."; return; }
-      if(doc.records.some(r => r.type === "FluidSys" && r.name === name)){ msg.textContent = `"${name}" exists.`; return; }
-      const loop = createFluidLoop(doc, type, name, {});
-      updateStatus(); currentDetail = loop; renderAll();
+  // ── Drag state ─────────────────────────────────────────────────
+  let dragEquip = null; // {eq, fromLoop}
+
+  // ── Equipment card (draggable chip) ───────────────────────────
+  function makeEquipCard(eq, loop){
+    const card = document.createElement('div');
+    card.draggable = true;
+    card.style.cssText = "border:1px solid var(--border);border-radius:var(--radius-2);background:var(--panel2);padding:5px 8px;cursor:grab;user-select:none;display:flex;align-items:center;gap:6px;min-width:110px;max-width:185px;box-sizing:border-box;";
+    let sumText = "";
+    if(eq.type==="Chlr")   sumText = [eq.attrs.Type||"Scroll", eq.attrs.CndsrType==="Fluid"?"Water-cooled":"Air-cooled"].join(" · ");
+    else if(eq.type==="Blr")    sumText = "Boiler · " + (eq.attrs.FuelSrc||"Gas");
+    else if(eq.type==="HtPump") sumText = (eq.attrs.SrcFluidSegInRef?"Water-src":"Air-src") + " HP";
+    else if(eq.type==="HtRej")  sumText = (eq.attrs.Type||"Open Tower");
+    else if(eq.type==="WtrHtr") sumText = (eq.attrs.Type||"Conventional");
+    const inner = document.createElement('div');
+    inner.style.cssText = "flex:1;min-width:0;pointer-events:none;";
+    inner.innerHTML = `<div style="font-family:var(--mono);font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${eq.name}</div><div style="font-size:10px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${sumText}</div>`;
+    const delBtn = document.createElement('button');
+    delBtn.textContent = "×"; delBtn.title = "Delete";
+    delBtn.style.cssText = "border:none;background:none;cursor:pointer;color:var(--text-dim);font-size:14px;padding:0 2px;line-height:1;flex-shrink:0;";
+    delBtn.addEventListener('click', e => { e.stopPropagation(); removeEquipFromLoop(doc, eq); updateStatus(); renderAll(); });
+    card.appendChild(inner); card.appendChild(delBtn);
+    card.addEventListener('click', () => openModal(box => buildEquipModal(box, eq)));
+    card.addEventListener('dragstart', e => {
+      dragEquip = {eq, fromLoop: loop};
+      e.dataTransfer.setData('text/plain', eq.name);
+      e.dataTransfer.effectAllowed = 'move';
+      setTimeout(() => { if(card.isConnected) card.style.opacity = '0.4'; }, 0);
+    });
+    card.addEventListener('dragend', () => { if(card.isConnected) card.style.opacity = ''; dragEquip = null; });
+    return card;
+  }
+
+  // ── Drop target wiring ─────────────────────────────────────────
+  function wireEquipDrop(el, targetLoop){
+    el.addEventListener('dragenter', e => { e.preventDefault(); el.style.outline="2px dashed var(--accent)"; el.style.outlineOffset="-2px"; });
+    el.addEventListener('dragover',  e => e.preventDefault());
+    el.addEventListener('dragleave', e => { if(!el.contains(e.relatedTarget)){ el.style.outline=""; el.style.outlineOffset=""; } });
+    el.addEventListener('drop', e => {
+      e.preventDefault(); el.style.outline=""; el.style.outlineOffset="";
+      if(!dragEquip || dragEquip.fromLoop === targetLoop) return;
+      const idx = doc.records.indexOf(dragEquip.eq);
+      if(idx !== -1) doc.records.splice(idx, 1);
+      const targetCh = getLoopChildren(doc, targetLoop);
+      const anchor = targetCh.length ? targetCh[targetCh.length-1] : targetLoop;
+      doc.records.splice(doc.records.indexOf(anchor)+1, 0, dragEquip.eq);
+      dirtyRecords.add(dragEquip.eq); updateStatus(); dragEquip = null; renderAll();
     });
   }
 
-  function renderDetail(loop){
-    const wrap = document.createElement('div');
-    wrap.style.cssText = "max-width:680px;";
-    container.appendChild(wrap);
+  // ── Loop card ─────────────────────────────────────────────────
+  function makeLoopCard(loop, siblingsOfSameType){
+    const loopType = loop.attrs.Type;
+    const isSHW = loopType === "ServiceHotWater";
+    const dropColor = loopType==="ChilledWater"?"#5b9bd5":loopType==="HotWater"?"#e05050":loopType==="CondenserWater"?"#38a169":"#d97706";
+    const ch = getLoopChildren(doc, loop);
+    const equip = ch.filter(r => ["Chlr","Blr","HtPump","HtRej","WtrHtr"].includes(r.type));
+    const {wired, total} = !isSHW ? wsLoopWiringStatus(loop) : {wired:0, total:0};
 
-    const backBtn = document.createElement('button');
-    backBtn.className = "btn";
-    backBtn.style.cssText = "margin-bottom:14px;font-size:12px;";
-    backBtn.textContent = "← Back to loops";
-    backBtn.addEventListener('click', () => { currentDetail = null; renderAll(); });
-    wrap.appendChild(backBtn);
+    const card = document.createElement('div');
+    card.style.cssText = "border:1px solid var(--border);border-left:3px solid "+dropColor+";border-radius:var(--radius-2);overflow:hidden;flex:1;min-width:180px;";
 
-    const hdrCard = document.createElement('div');
-    const hdrDropColor = loop.attrs.Type === "ChilledWater" ? "#5b9bd5" : loop.attrs.Type === "HotWater" ? "#e05050" : loop.attrs.Type === "CondenserWater" ? "#38a169" : "#d97706";
-    hdrCard.style.cssText = "border:1px solid var(--border);border-left:3px solid "+hdrDropColor+";border-radius:var(--radius-2);background:var(--panel);padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px;";
-    const dropIconEl = document.createElement('span');
-    dropIconEl.innerHTML = wsDropSvg(loop.attrs.Type, 18);
-    const nameEl = document.createElement('input');
-    nameEl.type = "text"; nameEl.value = loop.name;
-    nameEl.style.cssText = "font-family:var(--mono);font-size:14px;font-weight:600;background:transparent;border:none;border-bottom:1px solid var(--border);outline:none;width:240px;color:var(--text);padding:2px 4px;";
-    const typeTag = document.createElement('span');
-    typeTag.style.cssText = "font-size:10px;font-family:var(--mono);color:var(--text-dim);background:var(--panel2);border:1px solid var(--border);padding:2px 8px;border-radius:3px;";
-    typeTag.textContent = loop.attrs.Type;
-    hdrCard.appendChild(dropIconEl); hdrCard.appendChild(nameEl); hdrCard.appendChild(typeTag);
-    wrap.appendChild(hdrCard);
-    nameEl.addEventListener('change', () => {
-      const nv = nameEl.value.trim();
-      if(!nv || nv === loop.name){ nameEl.value = loop.name; return; }
-      if(doc.records.some(r => r.type === "FluidSys" && r.name === nv && r !== loop)){ nameEl.value = loop.name; return; }
-      loop.name = nv; dirtyRecords.add(loop); updateStatus();
-    });
+    // Header — click to open loop config (pumping)
+    const hdr = document.createElement('div');
+    hdr.style.cssText = "padding:7px 10px;background:var(--panel2);display:flex;align-items:center;gap:6px;cursor:pointer;min-height:36px;";
+    const demandBadge = !isSHW && total > 0
+      ? `<span style="font-size:10px;color:${wired===total?"var(--color-accent-ink)":"var(--edited)"};">${wired}/${total} coils</span>`
+      : "";
+    hdr.innerHTML = wsDropSvg(loopType, 13) +
+      `<span style="font-family:var(--mono);font-size:12px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${loop.name}</span>` +
+      demandBadge +
+      `<span style="font-size:10px;color:var(--text-dim);font-style:italic;" title="Click to edit pumping">⚙</span>` +
+      `<button class="ws-del-loop" style="border:none;background:none;cursor:pointer;color:var(--text-dim);font-size:14px;padding:0 0 0 4px;line-height:1;" title="Delete loop">×</button>`;
+    hdr.querySelector('.ws-del-loop').addEventListener('click', e => { e.stopPropagation(); deleteFluidLoop(doc, loop); updateStatus(); renderAll(); });
+    hdr.addEventListener('click', e => { if(e.target.classList.contains('ws-del-loop')) return; openModal(box => buildLoopModal(box, loop)); });
+    card.appendChild(hdr);
 
-    // ── Pumping ────────────────────────────────────────────────────
-    const pumpCard = document.createElement('div');
-    pumpCard.style.cssText = "border:1px solid var(--border);border-radius:var(--radius-2);background:var(--panel);padding:12px 14px;margin-bottom:14px;";
-    if(loop.attrs.Type !== "ServiceHotWater") wrap.appendChild(pumpCard);
-    function renderPumpSection(){
-      const ch = getLoopChildren(doc, loop);
-      const mode = getLoopPumpingMode(ch);
-      const pumps = ch.filter(r => r.type === "Pump");
-      const priPump = pumps[0] || null, secPump = pumps.length >= 2 ? pumps[1] : null;
-      const fs = "background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:var(--radius-2);font-family:var(--mono);font-size:12px;";
-      const spdO = (v) => `<option value="VariableSpeed" ${v==="VariableSpeed"?"selected":""}>Variable Speed</option><option value="ConstantSpeed" ${v!=="VariableSpeed"?"selected":""}>Constant Speed</option>`;
-      const operO = (v) => `<option value="OnDemand" ${!v||v==="OnDemand"?"selected":""}>On Demand</option><option value="StandBy" ${v==="StandBy"?"selected":""}>Stand By</option><option value="Scheduled" ${v==="Scheduled"?"selected":""}>Scheduled</option>`;
+    // Body: equipment chips
+    const body = document.createElement('div');
+    body.style.cssText = "padding:8px 10px;display:flex;flex-wrap:wrap;gap:6px;min-height:52px;align-items:flex-start;align-content:flex-start;";
+    if(!equip.length){
+      const ph = document.createElement('div');
+      ph.style.cssText = "font-size:10px;color:var(--ink-faint);font-style:italic;padding-top:14px;";
+      ph.textContent = "Drop equipment here, or add below";
+      body.appendChild(ph);
+    } else {
+      equip.forEach(eq => body.appendChild(makeEquipCard(eq, loop)));
+    }
+    card.appendChild(body);
+
+    // Footer: add buttons
+    const foot = document.createElement('div');
+    foot.style.cssText = "border-top:1px solid var(--border);padding:5px 8px;display:flex;gap:6px;flex-wrap:wrap;background:var(--panel2);";
+    const bStyle = "font-size:10.5px;padding:2px 8px;";
+    function addBtn(label, fn){ const b=document.createElement('button'); b.className="btn"; b.style.cssText=bStyle; b.textContent=label; b.addEventListener('click',fn); foot.appendChild(b); }
+    if(loopType==="ChilledWater"){
+      addBtn("+ Chiller", () => { const e=addEquipToLoop(doc,loop,"Chlr",{chlrType:"Scroll",chlrFuelSrc:"Electric",cndsrType:"Air"}); updateStatus(); renderAll(); if(e) openModal(box=>buildEquipModal(box,e)); });
+    } else if(loopType==="HotWater"){
+      addBtn("+ Boiler", () => { const e=addEquipToLoop(doc,loop,"Blr",{blrFuelSrc:"Gas"}); if(e){setPlainAttr(e,"DraftType","MechanicalNoncondensing");dirtyRecords.add(e);} updateStatus(); renderAll(); if(e) openModal(box=>buildEquipModal(box,e)); });
+      addBtn("+ Heat Pump", () => { const e=addEquipToLoop(doc,loop,"HtPump",{cndsrType:"AirSource"}); updateStatus(); renderAll(); if(e) openModal(box=>buildEquipModal(box,e)); });
+    } else if(loopType==="CondenserWater"){
+      addBtn("+ Cooling Tower", () => { const e=addEquipToLoop(doc,loop,"HtRej",{htRejType:"OpenTower"}); if(e){setPlainAttr(e,"ModCtrl","VariableSpeedDrive");setPlainAttr(e,"FanType","Axial");dirtyRecords.add(e);} updateStatus(); renderAll(); if(e) openModal(box=>buildEquipModal(box,e)); });
+    } else if(loopType==="ServiceHotWater"){
+      addBtn("+ Water Heater", () => { const e=addEquipToLoop(doc,loop,"WtrHtr",{wtrHtrType:"Conventional",fuelSrc:"Gas"}); updateStatus(); renderAll(); if(e) openModal(box=>buildEquipModal(box,e)); });
+    }
+    card.appendChild(foot);
+
+    // Wire drop only when there are sibling loops to drag between
+    if(siblingsOfSameType.length > 1) wireEquipDrop(body, loop);
+    return card;
+  }
+
+  // ── Type group ─────────────────────────────────────────────────
+  function makeTypeGroup(label, loops, color){
+    const section = document.createElement('div');
+    section.style.cssText = "margin-bottom:18px;";
+    const hdr = document.createElement('div');
+    hdr.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:8px;";
+    hdr.innerHTML = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0;"></span><span style="font-family:var(--mono);font-size:10px;letter-spacing:0.07em;text-transform:uppercase;color:var(--ink-faint);">${label}${loops.length>1?" — drag equipment between loops":""}</span><span style="flex:1;height:1px;background:var(--border);margin-left:4px;"></span>`;
+    section.appendChild(hdr);
+    const row = document.createElement('div');
+    row.style.cssText = "display:flex;gap:10px;flex-wrap:wrap;align-items:stretch;";
+    loops.forEach(loop => row.appendChild(makeLoopCard(loop, loops)));
+    section.appendChild(row);
+    return section;
+  }
+
+  // ── Loop config modal (pumping) ────────────────────────────────
+  function buildLoopModal(box, loop){
+    const ch = getLoopChildren(doc, loop);
+    const mode = getLoopPumpingMode(ch);
+    const pumps = ch.filter(r => r.type==="Pump");
+    const priPump = pumps[0]||null, secPump = pumps.length>=2?pumps[1]:null;
+    const fs = "background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:var(--radius-2);font-family:var(--mono);font-size:12px;";
+    const spdO = v => `<option value="VariableSpeed" ${v==="VariableSpeed"?"selected":""}>Variable Speed</option><option value="ConstantSpeed" ${v!=="VariableSpeed"?"selected":""}>Constant Speed</option>`;
+    const operO = v => `<option value="OnDemand" ${!v||v==="OnDemand"?"selected":""}>On Demand</option><option value="StandBy" ${v==="StandBy"?"selected":""}>Stand By</option><option value="Scheduled" ${v==="Scheduled"?"selected":""}>Scheduled</option>`;
+    const ttl = document.createElement('div');
+    ttl.style.cssText = "font-family:var(--mono);font-size:13px;font-weight:600;margin-bottom:14px;margin-right:24px;display:flex;align-items:center;gap:8px;";
+    ttl.innerHTML = wsDropSvg(loop.attrs.Type,14) + loop.name + `<span style="font-size:10px;color:var(--text-dim);background:var(--panel2);border:1px solid var(--border);padding:1px 6px;border-radius:3px;">${loop.attrs.Type}</span>`;
+    box.appendChild(ttl);
+    if(loop.attrs.Type !== "ServiceHotWater"){
+      const ps = document.createElement('div');
       let h = `<div style="font-family:var(--mono);font-size:10.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:10px;">Pumping</div>`;
       h += `<div style="display:flex;gap:20px;margin-bottom:12px;"><label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="radio" name="pmode" value="Primary" ${mode==="Primary"?"checked":""}> Primary-only</label><label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="radio" name="pmode" value="PrimarySecondary" ${mode==="PrimarySecondary"?"checked":""}> Primary-Secondary</label></div>`;
-      h += `<div style="display:grid;grid-template-columns:auto 1fr 1fr;gap:5px 10px;align-items:center;max-width:440px;"><span style="font-size:11px;color:var(--text-dim);">Primary pump</span><select id="priSpd" style="${fs}">${spdO(priPump&&priPump.attrs.SpdCtrl)}</select><select id="priOper" style="${fs}">${operO(priPump&&priPump.attrs.OperCtrl)}</select>`;
-      if(mode === "PrimarySecondary") h += `<span style="font-size:11px;color:var(--text-dim);">Secondary pump</span><select id="secSpd" style="${fs}">${spdO(secPump&&secPump.attrs.SpdCtrl)}</select><select id="secOper" style="${fs}">${operO(secPump&&secPump.attrs.OperCtrl)}</select>`;
+      h += `<div style="display:grid;grid-template-columns:auto 1fr 1fr;gap:5px 10px;align-items:center;max-width:380px;"><span style="font-size:11px;color:var(--text-dim);">Primary pump</span><select id="priSpd" style="${fs}">${spdO(priPump&&priPump.attrs.SpdCtrl)}</select><select id="priOper" style="${fs}">${operO(priPump&&priPump.attrs.OperCtrl)}</select>`;
+      if(mode==="PrimarySecondary") h += `<span style="font-size:11px;color:var(--text-dim);">Secondary pump</span><select id="secSpd" style="${fs}">${spdO(secPump&&secPump.attrs.SpdCtrl)}</select><select id="secOper" style="${fs}">${operO(secPump&&secPump.attrs.OperCtrl)}</select>`;
       h += `</div>`;
-      pumpCard.innerHTML = h;
-      pumpCard.querySelectorAll('input[name="pmode"]').forEach(radio => {
-        radio.addEventListener('change', () => { switchLoopPumping(doc, loop, radio.value); updateStatus(); renderPumpSection(); });
-      });
-      function bindPump(pump, sid, oid){
-        const se = pumpCard.querySelector('#'+sid), oe = pumpCard.querySelector('#'+oid);
-        if(!pump||!se) return;
-        se.addEventListener('change',  () => { setPlainAttr(pump,"SpdCtrl", se.value);  dirtyRecords.add(pump); updateStatus(); });
-        oe.addEventListener('change', () => { setPlainAttr(pump,"OperCtrl",oe.value); dirtyRecords.add(pump); updateStatus(); });
-      }
-      bindPump(priPump,'priSpd','priOper');
-      if(mode === "PrimarySecondary") bindPump(secPump,'secSpd','secOper');
-    }
-    if(loop.attrs.Type !== "ServiceHotWater") renderPumpSection();
-
-    // ── Equipment ──────────────────────────────────────────────────
-    const equipCard = document.createElement('div');
-    equipCard.style.cssText = "border:1px solid var(--border);border-radius:var(--radius-2);background:var(--panel);padding:12px 14px;margin-bottom:14px;";
-    wrap.appendChild(equipCard);
-    let editingEquipName = null;
-
-    function renderEquipSection(){
-      equipCard.innerHTML = "";
-      const ch = getLoopChildren(doc, loop);
-      const equip = ch.filter(r => ["Chlr","Blr","HtPump","HtRej","WtrHtr"].includes(r.type));
-      const loopType = loop.attrs.Type;
-      const fs = "background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:var(--radius-2);font-family:var(--mono);font-size:12px;";
-
-      const hdrEl = document.createElement('div');
-      hdrEl.style.cssText = "font-family:var(--mono);font-size:10.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:10px;";
-      hdrEl.textContent = loopType === "ChilledWater" ? "Chillers" : loopType === "HotWater" ? "Heating plant" : loopType === "ServiceHotWater" ? "Water heaters" : "Heat rejection";
-      equipCard.appendChild(hdrEl);
-
-      if(loopType === "HotWater"){
-        const note = document.createElement('div');
-        note.style.cssText = "font-size:11px;color:var(--text-dim);margin-bottom:10px;line-height:1.5;";
-        note.textContent = "Boilers and heat pumps may coexist (HP + supplemental boiler). Steam and WtrHtr are blocked under HotWater by CBECC-Com 2025 rules.";
-        equipCard.appendChild(note);
-      }
-
-      for(const eq of equip){
-        const isEditing = editingEquipName === eq.name;
-        const row = document.createElement('div');
-        row.style.cssText = "border:1px solid var(--border);border-radius:var(--radius-2);margin-bottom:8px;overflow:hidden;";
-        let sumText = eq.name + " — ";
-        if(eq.type==="Chlr")   sumText += [eq.attrs.Type, eq.attrs.CndsrType==="Fluid"?"water-cooled":"air-cooled", eq.attrs.FuelSrc==="Indirect"?"Indirect":""].filter(Boolean).join(" · ");
-        else if(eq.type==="Blr")    sumText += "Boiler · " + (eq.attrs.FuelSrc||"Gas") + (eq.attrs.DraftType?" · "+eq.attrs.DraftType:"");
-        else if(eq.type==="HtPump") sumText += (eq.attrs.SrcFluidSegInRef?"Water-source":"Air-source") + " Heat Pump";
-        else if(eq.type==="HtRej")  sumText += (eq.attrs.Type||"OpenTower");
-        const sumRow = document.createElement('div');
-        sumRow.style.cssText = "display:flex;justify-content:space-between;align-items:center;padding:8px 10px;gap:8px;background:var(--panel2);";
-        const sumSpan = document.createElement('span');
-        sumSpan.style.cssText = "font-family:var(--mono);font-size:12px;flex:1;min-width:0;";
-        sumSpan.textContent = sumText;
-        const btnGrp = document.createElement('div');
-        btnGrp.style.cssText = "display:flex;gap:6px;flex-shrink:0;";
-        const editBtn = document.createElement('button'); editBtn.className = "btn"; editBtn.style.cssText = "font-size:11px;padding:2px 8px;"; editBtn.textContent = isEditing ? "Close" : "Edit";
-        const delBtn  = document.createElement('button'); delBtn.className  = "btn"; delBtn.style.cssText  = "font-size:11px;padding:2px 8px;"; delBtn.textContent = "Delete";
-        btnGrp.appendChild(editBtn); btnGrp.appendChild(delBtn);
-        sumRow.appendChild(sumSpan); sumRow.appendChild(btnGrp);
-        row.appendChild(sumRow);
-        editBtn.addEventListener('click', () => { editingEquipName = isEditing ? null : eq.name; renderEquipSection(); });
-        delBtn.addEventListener('click',  () => { removeEquipFromLoop(doc, eq); editingEquipName = null; updateStatus(); renderEquipSection(); });
-
-        if(isEditing){
-          const form = document.createElement('div');
-          form.style.cssText = "padding:10px 12px;background:var(--panel);border-top:1px solid var(--border);";
-
-          if(eq.type === "Chlr"){
-            const cwLoops = doc.records.filter(r => r.type === "FluidSys" && r.attrs.Type === "CondenserWater");
-            let curCwLoop = null;
-            if(eq.attrs.CndsrFluidSegInRef){
-              for(const cwl of cwLoops){ const cch = getLoopChildren(doc,cwl); const cs = cch.find(r => r.type==="FluidSeg"&&r.attrs.Type==="PrimarySupply"); if(cs&&cs.name===eq.attrs.CndsrFluidSegInRef){ curCwLoop=cwl; break; } }
-            }
-            form.innerHTML = `<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center;max-width:420px;">
-              <span style="font-size:11px;color:var(--text-dim);">Type</span>
-              <select id="eq-type" style="${fs}">
-                <option value="Scroll" ${eq.attrs.Type==="Scroll"||!eq.attrs.Type?"selected":""}>Scroll</option>
-                <option value="Screw" ${eq.attrs.Type==="Screw"?"selected":""}>Screw</option>
-                <option value="Reciprocating" ${eq.attrs.Type==="Reciprocating"?"selected":""}>Reciprocating</option>
-                <option value="Centrifugal" ${eq.attrs.Type==="Centrifugal"?"selected":""}>Centrifugal</option>
-                <option value="AbsorptionSingleEffect" ${eq.attrs.Type==="AbsorptionSingleEffect"?"selected":""}>Absorption (single-effect)</option>
-              </select>
-              <span style="font-size:11px;color:var(--text-dim);">Condenser</span>
-              <select id="eq-cndsr" style="${fs}">
-                <option value="Air" ${eq.attrs.CndsrType!=="Fluid"?"selected":""}>Air-cooled</option>
-                <option value="Fluid" ${eq.attrs.CndsrType==="Fluid"?"selected":""}>Water-cooled (Fluid)</option>
-              </select>
-              <span style="font-size:11px;color:var(--text-dim);">Fuel</span>
-              <select id="eq-fuel" style="${fs}">
-                <option value="Electric" ${eq.attrs.FuelSrc!=="Indirect"?"selected":""}>Electric</option>
-                <option value="Indirect" ${eq.attrs.FuelSrc==="Indirect"?"selected":""}>Indirect (absorption)</option>
-              </select>
-              <span id="cwLbl" style="font-size:11px;color:var(--text-dim);">CW loop</span>
-              <div id="cwWrap" style="display:flex;gap:6px;align-items:center;">
-                <select id="eq-cw" style="${fs}flex:1;"><option value="">-- none --</option>${cwLoops.map(cwl=>`<option value="${cwl.name}"${curCwLoop&&curCwLoop.name===cwl.name?" selected":""}>${cwl.name}</option>`).join("")}</select>
-                <button class="btn" id="createCwBtn" style="font-size:11px;padding:4px 8px;white-space:nowrap;">+ New CW loop</button>
-              </div>
-              <span id="chlrNote" style="grid-column:1/-1;font-size:10px;color:var(--edited);font-style:italic;display:none;"></span>
-            </div>`;
-            function applyChlrConstraints(){
-              const typeVal  = form.querySelector('#eq-type').value;
-              const cndsrSel = form.querySelector('#eq-cndsr');
-              const fuelSel  = form.querySelector('#eq-fuel');
-              const noteEl   = form.querySelector('#chlrNote');
-              const notes = [];
-              const isCent = typeVal === "Centrifugal";
-              const isAbs  = typeVal === "AbsorptionSingleEffect";
-              if(isCent || isAbs){
-                cndsrSel.value = "Fluid";
-                Array.from(cndsrSel.options).forEach(o => { o.disabled = o.value !== "Fluid"; });
-                if(isCent) notes.push("Centrifugal requires water-cooled condenser (T24NRMF).");
-              } else {
-                Array.from(cndsrSel.options).forEach(o => { o.disabled = false; });
-              }
-              if(isAbs){
-                fuelSel.value = "Indirect";
-                Array.from(fuelSel.options).forEach(o => { o.disabled = o.value !== "Indirect"; });
-                notes.push("Absorption requires Indirect fuel source.");
-              } else {
-                Array.from(fuelSel.options).forEach(o => { o.disabled = false; });
-              }
-              const isFluid = cndsrSel.value === "Fluid";
-              form.querySelector('#cwLbl').style.display  = isFluid ? "" : "none";
-              form.querySelector('#cwWrap').style.display = isFluid ? "" : "none";
-              noteEl.textContent = notes.join(" ");
-              noteEl.style.display = notes.length ? "" : "none";
-            }
-            applyChlrConstraints();
-            form.querySelector('#eq-type').addEventListener('change', () => {
-              setPlainAttr(eq,"Type",form.querySelector('#eq-type').value); dirtyRecords.add(eq); updateStatus();
-              applyChlrConstraints();
-              setPlainAttr(eq,"CndsrType",form.querySelector('#eq-cndsr').value);
-              setPlainAttr(eq,"FuelSrc",form.querySelector('#eq-fuel').value);
-              if(form.querySelector('#eq-cndsr').value !== "Fluid"){ deletePlainAttr(eq,"CndsrFluidSegInRef"); deletePlainAttr(eq,"CndsrFluidSegOutRef"); }
-            });
-            form.querySelector('#eq-cndsr').addEventListener('change', () => {
-              const v=form.querySelector('#eq-cndsr').value; setPlainAttr(eq,"CndsrType",v); dirtyRecords.add(eq);
-              if(v!=="Fluid"){ deletePlainAttr(eq,"CndsrFluidSegInRef"); deletePlainAttr(eq,"CndsrFluidSegOutRef"); }
-              updateStatus(); applyChlrConstraints();
-            });
-            form.querySelector('#eq-fuel').addEventListener('change', () => { setPlainAttr(eq,"FuelSrc",form.querySelector('#eq-fuel').value); dirtyRecords.add(eq); updateStatus(); });
-            form.querySelector('#eq-cw').addEventListener('change', () => {
-              const cwl=cwLoops.find(l=>l.name===form.querySelector('#eq-cw').value);
-              if(cwl){ const cch=getLoopChildren(doc,cwl); const cs=cch.find(r=>r.type==="FluidSeg"&&r.attrs.Type==="PrimarySupply"); const cr=cch.find(r=>r.type==="FluidSeg"&&r.attrs.Type==="PrimaryReturn"); if(cs) setPlainAttr(eq,"CndsrFluidSegInRef",cs.name); if(cr) setPlainAttr(eq,"CndsrFluidSegOutRef",cr.name); }
-              else { deletePlainAttr(eq,"CndsrFluidSegInRef"); deletePlainAttr(eq,"CndsrFluidSegOutRef"); }
-              dirtyRecords.add(eq); updateStatus();
-            });
-            form.querySelector('#createCwBtn').addEventListener('click', () => {
-              const cwNow=doc.records.filter(r=>r.type==="FluidSys"&&r.attrs.Type==="CondenserWater");
-              createFluidLoop(doc,"CondenserWater",cwNow.length===0?"CW":"CW "+(cwNow.length+1),{});
-              updateStatus(); currentDetail=loop; renderAll();
-            });
-
-          } else if(eq.type === "Blr"){
-            const isGas = eq.attrs.FuelSrc !== "Electric";
-            form.innerHTML = `<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center;max-width:340px;">
-              <span style="font-size:11px;color:var(--text-dim);">Fuel</span>
-              <select id="eq-fuel" style="${fs}">
-                <option value="Gas" ${eq.attrs.FuelSrc!=="Electric"?"selected":""}>Gas</option>
-                <option value="Electric" ${eq.attrs.FuelSrc==="Electric"?"selected":""}>Electric</option>
-              </select>
-              <span id="draftLbl" style="font-size:11px;color:var(--text-dim);"${!isGas?" hidden":""}>Draft type</span>
-              <select id="eq-draft" style="${fs}"${!isGas?" hidden":""}>
-                <option value="MechanicalNoncondensing" ${!eq.attrs.DraftType||eq.attrs.DraftType==="MechanicalNoncondensing"?"selected":""}>Mechanical Noncondensing</option>
-                <option value="Condensing" ${eq.attrs.DraftType==="Condensing"?"selected":""}>Condensing</option>
-                <option value="Natural" ${eq.attrs.DraftType==="Natural"?"selected":""}>Natural Draft</option>
-              </select>
-            </div><div style="font-size:10px;color:var(--text-dim);margin-top:8px;font-style:italic;">Efficiency (AFUE, EIR, CombEff, CapRtd) can be set in the Records panel.</div>`;
-            form.querySelector('#eq-fuel').addEventListener('change', function(){
-              const gas = this.value !== "Electric";
-              setPlainAttr(eq,"FuelSrc",this.value); dirtyRecords.add(eq); updateStatus();
-              form.querySelector('#draftLbl').hidden = !gas;
-              form.querySelector('#eq-draft').hidden = !gas;
-              if(!gas){ deletePlainAttr(eq,"DraftType"); } else { setPlainAttr(eq,"DraftType","MechanicalNoncondensing"); }
-              renderEquipSection();
-            });
-            form.querySelector('#eq-draft').addEventListener('change', function(){
-              setPlainAttr(eq,"DraftType",this.value); dirtyRecords.add(eq); updateStatus();
-            });
-
-          } else if(eq.type === "HtPump"){
-            // CndsrType is NInp in CBECC — must not be written. Infer from SrcFluidSegInRef presence.
-            if(eq.attrs.CndsrType !== undefined){ deletePlainAttr(eq, "CndsrType"); dirtyRecords.add(eq); }
-            const isAir = !eq.attrs.SrcFluidSegInRef;
-            const cwLoops = doc.records.filter(r => r.type === "FluidSys" && r.attrs.Type === "CondenserWater");
-            const curHpCwLoop = wsCondEquipCurrentCwLoop(eq);
-            form.innerHTML = `<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center;max-width:380px;">
-              <span style="font-size:11px;color:var(--text-dim);">Source type</span>
-              <select id="eq-cndsr" style="${fs}">
-                <option value="AirSource" ${isAir?"selected":""}>Air-source</option>
-                <option value="WaterSource" ${!isAir?"selected":""}>Water-source (WSHP)</option>
-              </select>
-              <span id="cwSrcLbl" style="font-size:11px;color:var(--text-dim);"${isAir?" hidden":""}>CW loop (source)</span>
-              <div id="cwSrcWrap" style="display:flex;gap:6px;align-items:center;"${isAir?" hidden":""}>
-                <select id="eq-cwsrc" style="${fs}flex:1;">
-                  <option value="">-- none --</option>
-                  ${cwLoops.map(cwl=>`<option value="${cwl.name}" ${curHpCwLoop&&curHpCwLoop.name===cwl.name?"selected":""}>${cwl.name}</option>`).join("")}
-                </select>
-              </div>
-              <span id="defrostLbl" style="font-size:11px;color:var(--text-dim);"${!isAir?" hidden":""}>Defrost control</span>
-              <select id="eq-defrost" style="${fs}"${!isAir?" hidden":""}>
-                <option value="OnDemand" ${!eq.attrs.HtgDefrostCtrl||eq.attrs.HtgDefrostCtrl==="OnDemand"?"selected":""}>On Demand</option>
-                <option value="Timed" ${eq.attrs.HtgDefrostCtrl==="Timed"?"selected":""}>Timed</option>
-                <option value="TimedEmpirical" ${eq.attrs.HtgDefrostCtrl==="TimedEmpirical"?"selected":""}>Timed Empirical</option>
-                <option value="None" ${eq.attrs.HtgDefrostCtrl==="None"?"selected":""}>None</option>
-              </select>
-              <span id="defrostTmpLbl" style="font-size:11px;color:var(--text-dim);"${!isAir?" hidden":""}>Defrost temp (&deg;F)</span>
-              <input type="number" id="eq-defrostTmp" value="${eq.attrs.HtgDefrostTempMax||35}" style="${fs}width:80px;"${!isAir?" hidden":""}>
-            </div><div style="font-size:10px;color:var(--text-dim);margin-top:8px;font-style:italic;">Performance (HtgCapRtd, HtgCOP, ClgCapRtd, etc.) can be set in the Records panel.</div>`;
-            form.querySelector('#eq-cndsr').addEventListener('change', function(){
-              dirtyRecords.add(eq); updateStatus();
-              const air = this.value !== "WaterSource";
-              form.querySelector('#cwSrcLbl').hidden = air;
-              form.querySelector('#cwSrcWrap').hidden = air;
-              form.querySelector('#defrostLbl').hidden = !air;
-              form.querySelector('#eq-defrost').hidden = !air;
-              form.querySelector('#defrostTmpLbl').hidden = !air;
-              form.querySelector('#eq-defrostTmp').hidden = !air;
-              if(air){ wsWireCondEquipToLoop(eq, null); }
-            });
-            const cwSrcSel = form.querySelector('#eq-cwsrc');
-            if(cwSrcSel) cwSrcSel.addEventListener('change', function(){
-              const cwl = cwLoops.find(l => l.name === this.value) || null;
-              wsWireCondEquipToLoop(eq, cwl); updateStatus();
-            });
-            form.querySelector('#eq-defrost').addEventListener('change', function(){
-              setPlainAttr(eq,"HtgDefrostCtrl",this.value); dirtyRecords.add(eq); updateStatus();
-            });
-            form.querySelector('#eq-defrostTmp').addEventListener('change', function(){
-              const v=parseFloat(this.value); if(!isNaN(v)){ setPlainAttr(eq,"HtgDefrostTempMax",String(v)); dirtyRecords.add(eq); updateStatus(); }
-            });
-
-          } else if(eq.type === "HtRej"){
-            form.innerHTML = `<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center;max-width:380px;">
-              <span style="font-size:11px;color:var(--text-dim);">Type</span>
-              <select id="eq-type" style="${fs}">
-                <option value="OpenTower" ${!eq.attrs.Type||eq.attrs.Type==="OpenTower"?"selected":""}>Open Tower</option>
-                <option value="ClosedTower" ${eq.attrs.Type==="ClosedTower"?"selected":""}>Closed Tower</option>
-                <option value="ClosedTowerEvaporative" ${eq.attrs.Type==="ClosedTowerEvaporative"?"selected":""}>Closed Tower Evaporative</option>
-              </select>
-              <span style="font-size:11px;color:var(--text-dim);">Mod control</span>
-              <select id="eq-modctrl" style="${fs}">
-                <option value="VariableSpeedDrive" ${!eq.attrs.ModCtrl||eq.attrs.ModCtrl==="VariableSpeedDrive"?"selected":""}>Variable Speed Drive</option>
-                <option value="TwoSpeed" ${eq.attrs.ModCtrl==="TwoSpeed"?"selected":""}>Two Speed</option>
-                <option value="Cycling" ${eq.attrs.ModCtrl==="Cycling"?"selected":""}>Cycling</option>
-                <option value="Bypass" ${eq.attrs.ModCtrl==="Bypass"?"selected":""}>Bypass</option>
-              </select>
-              <span style="font-size:11px;color:var(--text-dim);">Fan type</span>
-              <select id="eq-fantype" style="${fs}">
-                <option value="Axial" ${!eq.attrs.FanType||eq.attrs.FanType==="Axial"?"selected":""}>Axial</option>
-                <option value="Centrifugal" ${eq.attrs.FanType==="Centrifugal"?"selected":""}>Centrifugal</option>
-              </select>
-            </div>`;
-            form.querySelector('#eq-type').addEventListener('change', function(){ setPlainAttr(eq,"Type",this.value); dirtyRecords.add(eq); updateStatus(); renderEquipSection(); });
-            form.querySelector('#eq-modctrl').addEventListener('change', function(){ setPlainAttr(eq,"ModCtrl",this.value); dirtyRecords.add(eq); updateStatus(); });
-            form.querySelector('#eq-fantype').addEventListener('change', function(){ setPlainAttr(eq,"FanType",this.value); dirtyRecords.add(eq); updateStatus(); });
-
-          } else if(eq.type === "WtrHtr"){
-            const isElecOnly = eq.attrs.Type === "HeatPumpPackaged" || eq.attrs.Type === "HeatPumpSplit";
-            form.innerHTML = `<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center;max-width:380px;">
-              <span style="font-size:11px;color:var(--text-dim);">Type</span>
-              <select id="eq-wh-type" style="${fs}">
-                <option value="Conventional" ${!eq.attrs.Type||eq.attrs.Type==="Conventional"?"selected":""}>Conventional (storage/gas or electric)</option>
-                <option value="HeatPumpPackaged" ${eq.attrs.Type==="HeatPumpPackaged"?"selected":""}>Heat Pump — Packaged (HPWH)</option>
-                <option value="HeatPumpSplit" ${eq.attrs.Type==="HeatPumpSplit"?"selected":""}>Heat Pump — Split</option>
-              </select>
-              <span id="wh-fuel-lbl" style="font-size:11px;color:var(--text-dim);"${isElecOnly?" hidden":""}>Fuel source</span>
-              <select id="eq-wh-fuel" style="${fs}"${isElecOnly?" hidden":""}>
-                <option value="Gas" ${!eq.attrs.FuelSrc||eq.attrs.FuelSrc==="Gas"?"selected":""}>Gas</option>
-                <option value="Electric" ${eq.attrs.FuelSrc==="Electric"?"selected":""}>Electric</option>
-              </select>
-              <span style="font-size:11px;color:var(--text-dim);">Storage cap. (gal)</span>
-              <input id="eq-wh-stor" type="number" min="0" step="1" style="${fs}" placeholder="optional" value="${eq.attrs.StorCap||""}">
-              <span style="font-size:11px;color:var(--text-dim);">Setpoint (°F)</span>
-              <input id="eq-wh-setp" type="number" min="80" max="180" step="1" style="${fs}" placeholder="optional" value="${eq.attrs.WtrHtrSetPtTemp||""}">
-            </div>`;
-            form.querySelector('#eq-wh-type').addEventListener('change', function(){
-              setPlainAttr(eq,"Type",this.value); dirtyRecords.add(eq); updateStatus();
-              const elec = this.value === "HeatPumpPackaged" || this.value === "HeatPumpSplit";
-              form.querySelector('#wh-fuel-lbl').hidden = elec;
-              form.querySelector('#eq-wh-fuel').hidden = elec;
-              if(elec){ setPlainAttr(eq,"FuelSrc","Electric"); dirtyRecords.add(eq); }
-            });
-            form.querySelector('#eq-wh-fuel').addEventListener('change', function(){ setPlainAttr(eq,"FuelSrc",this.value); dirtyRecords.add(eq); updateStatus(); });
-            form.querySelector('#eq-wh-stor').addEventListener('change', function(){
-              if(this.value) setPlainAttr(eq,"StorCap",parseFloat(this.value)); else deletePlainAttr(eq,"StorCap");
-              dirtyRecords.add(eq); updateStatus();
-            });
-            form.querySelector('#eq-wh-setp').addEventListener('change', function(){
-              if(this.value) setPlainAttr(eq,"WtrHtrSetPtTemp",parseFloat(this.value)); else deletePlainAttr(eq,"WtrHtrSetPtTemp");
-              dirtyRecords.add(eq); updateStatus();
-            });
-          }
-
-          row.appendChild(form);
-        }
-        equipCard.appendChild(row);
-      }
-
-      // Add equipment buttons
-      const addRow = document.createElement('div');
-      addRow.style.cssText = "display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;";
-      if(loopType === "ChilledWater"){
-        const btn = document.createElement('button'); btn.className="btn"; btn.style.cssText="font-size:11px;"; btn.textContent="+ Add chiller";
-        btn.addEventListener('click', () => { const e=addEquipToLoop(doc,loop,"Chlr",{chlrType:"Scroll",chlrFuelSrc:"Electric",cndsrType:"Air"}); editingEquipName=e?e.name:null; updateStatus(); renderEquipSection(); });
-        addRow.appendChild(btn);
-      } else if(loopType === "HotWater"){
-        const b1 = document.createElement('button'); b1.className="btn"; b1.style.cssText="font-size:11px;"; b1.textContent="+ Add boiler";
-        b1.addEventListener('click', () => {
-          const e=addEquipToLoop(doc,loop,"Blr",{blrFuelSrc:"Gas"});
-          if(e){ setPlainAttr(e,"DraftType","MechanicalNoncondensing"); dirtyRecords.add(e); }
-          editingEquipName=e?e.name:null; updateStatus(); renderEquipSection();
-        });
-        const b2 = document.createElement('button'); b2.className="btn"; b2.style.cssText="font-size:11px;"; b2.textContent="+ Add heat pump";
-        b2.addEventListener('click', () => { const e=addEquipToLoop(doc,loop,"HtPump",{cndsrType:"AirSource"}); editingEquipName=e?e.name:null; updateStatus(); renderEquipSection(); });
-        addRow.appendChild(b1); addRow.appendChild(b2);
-      } else if(loopType === "CondenserWater"){
-        const btn = document.createElement('button'); btn.className="btn"; btn.style.cssText="font-size:11px;"; btn.textContent="+ Add cooling tower";
-        btn.addEventListener('click', () => {
-          const e=addEquipToLoop(doc,loop,"HtRej",{htRejType:"OpenTower"});
-          if(e){ setPlainAttr(e,"ModCtrl","VariableSpeedDrive"); setPlainAttr(e,"FanType","Axial"); dirtyRecords.add(e); }
-          editingEquipName=e?e.name:null; updateStatus(); renderEquipSection();
-        });
-        addRow.appendChild(btn);
-      } else if(loopType === "ServiceHotWater"){
-        const btn = document.createElement('button'); btn.className="btn"; btn.style.cssText="font-size:11px;"; btn.textContent="+ Add water heater";
-        btn.addEventListener('click', () => { const e=addEquipToLoop(doc,loop,"WtrHtr",{wtrHtrType:"Conventional",fuelSrc:"Gas"}); editingEquipName=e?e.name:null; updateStatus(); renderEquipSection(); });
-        addRow.appendChild(btn);
-      }
-      equipCard.appendChild(addRow);
-    }
-    renderEquipSection();
-
-    // ── Demands (read-only) ────────────────────────────────────────
-    if(loop.attrs.Type !== "ServiceHotWater"){
-      const demandCard = document.createElement('div');
-      demandCard.style.cssText = "border:1px solid var(--border);border-radius:var(--radius-2);background:var(--panel);padding:12px 14px;margin-bottom:14px;";
-      wrap.appendChild(demandCard);
-      function renderDemandSection(){
-        demandCard.innerHTML = "";
-        const hdrEl = document.createElement('div');
-        hdrEl.style.cssText = "display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px;";
-        hdrEl.innerHTML = `<span style="font-family:var(--mono);font-size:10.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--ink-faint);">Demands — auto-wired coils</span><span style="font-size:10px;color:var(--text-dim);">Managed in &ldquo;Assign water-side coils&rdquo;</span>`;
-        demandCard.appendChild(hdrEl);
-        const {sup} = wsSegsOf(loop);
-        const wc = wsGetWaterCoils();
-        let compatCoils = [];
-        if(loop.attrs.Type === "ChilledWater")        compatCoils = wc.filter(c => c.attrs.Type === "ChilledWater");
-        else if(loop.attrs.Type === "HotWater")       compatCoils = wc.filter(c => c.attrs.Type === "HotWater");
-        else if(loop.attrs.Type === "CondenserWater") compatCoils = wc.filter(c => c.attrs.CndsrType === "WaterSource");
-        if(!compatCoils.length){
-          const empty = document.createElement('div');
-          empty.style.cssText = "font-size:11px;color:var(--text-dim);font-style:italic;";
-          empty.textContent = "No compatible coils in this file.";
-          demandCard.appendChild(empty);
-          return;
-        }
-        const wiredCoils = compatCoils.filter(c => sup && c.attrs.FluidSegInRef === sup.name);
-        const unwiredCoils = compatCoils.filter(c => !(sup && c.attrs.FluidSegInRef === sup.name));
-        const grid = document.createElement('div');
-        grid.style.cssText = "display:flex;flex-direction:column;gap:3px;";
-        for(const coil of wiredCoils){
-          const sys = wsParentSysOfCoil(coil);
-          const row = document.createElement('div');
-          row.style.cssText = "display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;";
-          row.innerHTML = `<span style="color:var(--color-accent-ink);">&#10003;</span><span style="color:var(--text-dim);">${sys ? "<strong>" + sys.name + "</strong> &rsaquo; " : ""}${coil.name}</span><span style="font-size:10px;color:var(--text-dim);background:var(--panel2);border:1px solid var(--border);padding:0 5px;border-radius:3px;">auto-wired</span>`;
-          grid.appendChild(row);
-        }
-        for(const coil of unwiredCoils){
-          const sys = wsParentSysOfCoil(coil);
-          const row = document.createElement('div');
-          row.style.cssText = "display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;";
-          row.innerHTML = `<span style="color:var(--edited);">&#8212;</span><span style="color:var(--text-dim);">${sys ? "<strong>" + sys.name + "</strong> &rsaquo; " : ""}${coil.name}</span><span style="font-size:10px;color:var(--edited);">not wired</span>`;
-          grid.appendChild(row);
-        }
-        demandCard.appendChild(grid);
-      }
-      renderDemandSection();
+      ps.innerHTML = h;
+      ps.querySelectorAll('input[name="pmode"]').forEach(r => r.addEventListener('change', () => { switchLoopPumping(doc,loop,r.value); updateStatus(); closeModal(); openModal(b=>buildLoopModal(b,loop)); }));
+      function bndPump(p,sid,oid){ const se=ps.querySelector('#'+sid),oe=ps.querySelector('#'+oid); if(!p||!se) return; se.addEventListener('change',()=>{setPlainAttr(p,"SpdCtrl",se.value);dirtyRecords.add(p);updateStatus();}); oe.addEventListener('change',()=>{setPlainAttr(p,"OperCtrl",oe.value);dirtyRecords.add(p);updateStatus();}); }
+      bndPump(priPump,'priSpd','priOper'); if(mode==="PrimarySecondary") bndPump(secPump,'secSpd','secOper');
+      box.appendChild(ps);
     }
   }
+
+  // ── Equipment edit modal ──────────────────────────────────────
+  function buildEquipModal(box, eq){
+    const fs = "background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:var(--radius-2);font-family:var(--mono);font-size:12px;";
+    const ttl = document.createElement('div');
+    ttl.style.cssText = "font-family:var(--mono);font-size:12px;font-weight:600;margin-bottom:14px;margin-right:24px;color:var(--text-dim);";
+    ttl.textContent = eq.name; box.appendChild(ttl);
+    const c = document.createElement('div');
+    if(eq.type==="Chlr"){
+      const cwLoops=doc.records.filter(r=>r.type==="FluidSys"&&r.attrs.Type==="CondenserWater");
+      let curCwLoop=null;
+      if(eq.attrs.CndsrFluidSegInRef) for(const cwl of cwLoops){ const cch=getLoopChildren(doc,cwl); const cs=cch.find(r=>r.type==="FluidSeg"&&r.attrs.Type==="PrimarySupply"); if(cs&&cs.name===eq.attrs.CndsrFluidSegInRef){curCwLoop=cwl;break;} }
+      c.innerHTML=`<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center;max-width:380px;">
+        <span style="font-size:11px;color:var(--text-dim);">Type</span>
+        <select id="eq-type" style="${fs}"><option value="Scroll" ${eq.attrs.Type==="Scroll"||!eq.attrs.Type?"selected":""}>Scroll</option><option value="Screw" ${eq.attrs.Type==="Screw"?"selected":""}>Screw</option><option value="Reciprocating" ${eq.attrs.Type==="Reciprocating"?"selected":""}>Reciprocating</option><option value="Centrifugal" ${eq.attrs.Type==="Centrifugal"?"selected":""}>Centrifugal</option><option value="AbsorptionSingleEffect" ${eq.attrs.Type==="AbsorptionSingleEffect"?"selected":""}>Absorption (single-effect)</option></select>
+        <span style="font-size:11px;color:var(--text-dim);">Condenser</span>
+        <select id="eq-cndsr" style="${fs}"><option value="Air" ${eq.attrs.CndsrType!=="Fluid"?"selected":""}>Air-cooled</option><option value="Fluid" ${eq.attrs.CndsrType==="Fluid"?"selected":""}>Water-cooled (Fluid)</option></select>
+        <span style="font-size:11px;color:var(--text-dim);">Fuel</span>
+        <select id="eq-fuel" style="${fs}"><option value="Electric" ${eq.attrs.FuelSrc!=="Indirect"?"selected":""}>Electric</option><option value="Indirect" ${eq.attrs.FuelSrc==="Indirect"?"selected":""}>Indirect (absorption)</option></select>
+        <span id="cwLbl" style="font-size:11px;color:var(--text-dim);">CW loop</span>
+        <div id="cwWrap" style="display:flex;gap:6px;"><select id="eq-cw" style="${fs}flex:1;"><option value="">-- none --</option>${cwLoops.map(cwl=>`<option value="${cwl.name}"${curCwLoop&&curCwLoop.name===cwl.name?" selected":""}>${cwl.name}</option>`).join("")}</select><button class="btn" id="createCwBtn" style="font-size:11px;padding:4px 8px;">+ New CW</button></div>
+        <span id="chlrNote" style="grid-column:1/-1;font-size:10px;color:var(--edited);font-style:italic;display:none;"></span>
+      </div>`;
+      function applyCC(){ const tv=c.querySelector('#eq-type').value,cs=c.querySelector('#eq-cndsr'),fs2=c.querySelector('#eq-fuel'),ne=c.querySelector('#chlrNote'); const notes=[],isCent=tv==="Centrifugal",isAbs=tv==="AbsorptionSingleEffect"; if(isCent||isAbs){cs.value="Fluid";Array.from(cs.options).forEach(o=>{o.disabled=o.value!=="Fluid";});if(isCent)notes.push("Centrifugal requires water-cooled condenser.");} else{Array.from(cs.options).forEach(o=>{o.disabled=false;});} if(isAbs){fs2.value="Indirect";Array.from(fs2.options).forEach(o=>{o.disabled=o.value!=="Indirect";});notes.push("Absorption requires Indirect fuel.");}else{Array.from(fs2.options).forEach(o=>{o.disabled=false;});} const isFluid=cs.value==="Fluid"; c.querySelector('#cwLbl').style.display=isFluid?"":"none"; c.querySelector('#cwWrap').style.display=isFluid?"":"none"; ne.textContent=notes.join(" "); ne.style.display=notes.length?"":"none"; }
+      applyCC();
+      c.querySelector('#eq-type').addEventListener('change',()=>{setPlainAttr(eq,"Type",c.querySelector('#eq-type').value);dirtyRecords.add(eq);updateStatus();applyCC();setPlainAttr(eq,"CndsrType",c.querySelector('#eq-cndsr').value);setPlainAttr(eq,"FuelSrc",c.querySelector('#eq-fuel').value);if(c.querySelector('#eq-cndsr').value!=="Fluid"){deletePlainAttr(eq,"CndsrFluidSegInRef");deletePlainAttr(eq,"CndsrFluidSegOutRef");}renderAll();openModal(b=>buildEquipModal(b,eq));});
+      c.querySelector('#eq-cndsr').addEventListener('change',()=>{const v=c.querySelector('#eq-cndsr').value;setPlainAttr(eq,"CndsrType",v);dirtyRecords.add(eq);if(v!=="Fluid"){deletePlainAttr(eq,"CndsrFluidSegInRef");deletePlainAttr(eq,"CndsrFluidSegOutRef");}updateStatus();applyCC();});
+      c.querySelector('#eq-fuel').addEventListener('change',()=>{setPlainAttr(eq,"FuelSrc",c.querySelector('#eq-fuel').value);dirtyRecords.add(eq);updateStatus();});
+      c.querySelector('#eq-cw').addEventListener('change',()=>{const cwl=cwLoops.find(l=>l.name===c.querySelector('#eq-cw').value);if(cwl){const cch=getLoopChildren(doc,cwl);const cs2=cch.find(r=>r.type==="FluidSeg"&&r.attrs.Type==="PrimarySupply");const cr=cch.find(r=>r.type==="FluidSeg"&&r.attrs.Type==="PrimaryReturn");if(cs2)setPlainAttr(eq,"CndsrFluidSegInRef",cs2.name);if(cr)setPlainAttr(eq,"CndsrFluidSegOutRef",cr.name);}else{deletePlainAttr(eq,"CndsrFluidSegInRef");deletePlainAttr(eq,"CndsrFluidSegOutRef");}dirtyRecords.add(eq);updateStatus();});
+      c.querySelector('#createCwBtn').addEventListener('click',()=>{const cwNow=doc.records.filter(r=>r.type==="FluidSys"&&r.attrs.Type==="CondenserWater");createFluidLoop(doc,"CondenserWater",cwNow.length===0?"CW":"CW "+(cwNow.length+1),{});updateStatus();closeModal();renderAll();});
+    } else if(eq.type==="Blr"){
+      const isGas=eq.attrs.FuelSrc!=="Electric";
+      c.innerHTML=`<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center;max-width:300px;">
+        <span style="font-size:11px;color:var(--text-dim);">Fuel</span>
+        <select id="eq-fuel" style="${fs}"><option value="Gas" ${eq.attrs.FuelSrc!=="Electric"?"selected":""}>Gas</option><option value="Electric" ${eq.attrs.FuelSrc==="Electric"?"selected":""}>Electric</option></select>
+        <span id="draftLbl" style="font-size:11px;color:var(--text-dim);"${!isGas?" hidden":""}>Draft type</span>
+        <select id="eq-draft" style="${fs}"${!isGas?" hidden":""}>
+          <option value="MechanicalNoncondensing" ${!eq.attrs.DraftType||eq.attrs.DraftType==="MechanicalNoncondensing"?"selected":""}>Mechanical Noncondensing</option>
+          <option value="Condensing" ${eq.attrs.DraftType==="Condensing"?"selected":""}>Condensing</option>
+          <option value="Natural" ${eq.attrs.DraftType==="Natural"?"selected":""}>Natural Draft</option>
+        </select>
+      </div><div style="font-size:10px;color:var(--text-dim);margin-top:8px;font-style:italic;">Efficiency (AFUE, EIR, CombEff, CapRtd) — set in Records panel.</div>`;
+      c.querySelector('#eq-fuel').addEventListener('change',function(){const gas=this.value!=="Electric";setPlainAttr(eq,"FuelSrc",this.value);dirtyRecords.add(eq);updateStatus();c.querySelector('#draftLbl').hidden=!gas;c.querySelector('#eq-draft').hidden=!gas;if(!gas)deletePlainAttr(eq,"DraftType");else setPlainAttr(eq,"DraftType","MechanicalNoncondensing");});
+      c.querySelector('#eq-draft').addEventListener('change',function(){setPlainAttr(eq,"DraftType",this.value);dirtyRecords.add(eq);updateStatus();});
+    } else if(eq.type==="HtPump"){
+      if(eq.attrs.CndsrType!==undefined){deletePlainAttr(eq,"CndsrType");dirtyRecords.add(eq);}
+      const isAir=!eq.attrs.SrcFluidSegInRef;
+      const cwLoops=doc.records.filter(r=>r.type==="FluidSys"&&r.attrs.Type==="CondenserWater");
+      const curHpCwLoop=wsCondEquipCurrentCwLoop(eq);
+      c.innerHTML=`<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center;max-width:320px;">
+        <span style="font-size:11px;color:var(--text-dim);">Source type</span>
+        <select id="eq-cndsr" style="${fs}"><option value="AirSource" ${isAir?"selected":""}>Air-source</option><option value="WaterSource" ${!isAir?"selected":""}>Water-source (WSHP)</option></select>
+        <span id="cwSrcLbl" style="font-size:11px;color:var(--text-dim);"${isAir?" hidden":""}>CW loop</span>
+        <select id="eq-cwsrc" style="${fs}"${isAir?" hidden":""}><option value="">-- none --</option>${cwLoops.map(cwl=>`<option value="${cwl.name}" ${curHpCwLoop&&curHpCwLoop.name===cwl.name?"selected":""}>${cwl.name}</option>`).join("")}</select>
+        <span id="defrostLbl" style="font-size:11px;color:var(--text-dim);"${!isAir?" hidden":""}>Defrost</span>
+        <select id="eq-defrost" style="${fs}"${!isAir?" hidden":""}><option value="OnDemand" ${!eq.attrs.HtgDefrostCtrl||eq.attrs.HtgDefrostCtrl==="OnDemand"?"selected":""}>On Demand</option><option value="Timed" ${eq.attrs.HtgDefrostCtrl==="Timed"?"selected":""}>Timed</option><option value="TimedEmpirical" ${eq.attrs.HtgDefrostCtrl==="TimedEmpirical"?"selected":""}>Timed Empirical</option><option value="None" ${eq.attrs.HtgDefrostCtrl==="None"?"selected":""}>None</option></select>
+      </div>`;
+      c.querySelector('#eq-cndsr').addEventListener('change',function(){const water=this.value==="WaterSource";if(!water){deletePlainAttr(eq,"SrcFluidSegInRef");deletePlainAttr(eq,"SrcFluidSegOutRef");}dirtyRecords.add(eq);updateStatus();c.querySelector('#cwSrcLbl').hidden=!water;c.querySelector('#eq-cwsrc').hidden=!water;c.querySelector('#defrostLbl').hidden=water;c.querySelector('#eq-defrost').hidden=water;});
+      c.querySelector('#eq-cwsrc').addEventListener('change',function(){const cwl=cwLoops.find(l=>l.name===this.value);if(cwl){const cch=getLoopChildren(doc,cwl);const cs=cch.find(r=>r.type==="FluidSeg"&&r.attrs.Type==="PrimarySupply");const cr=cch.find(r=>r.type==="FluidSeg"&&r.attrs.Type==="PrimaryReturn");if(cs)setPlainAttr(eq,"SrcFluidSegInRef",cs.name);if(cr)setPlainAttr(eq,"SrcFluidSegOutRef",cr.name);}else{deletePlainAttr(eq,"SrcFluidSegInRef");deletePlainAttr(eq,"SrcFluidSegOutRef");}dirtyRecords.add(eq);updateStatus();});
+      c.querySelector('#eq-defrost').addEventListener('change',function(){setPlainAttr(eq,"HtgDefrostCtrl",this.value);dirtyRecords.add(eq);updateStatus();});
+    } else if(eq.type==="HtRej"){
+      c.innerHTML=`<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center;max-width:320px;">
+        <span style="font-size:11px;color:var(--text-dim);">Type</span>
+        <select id="eq-type" style="${fs}"><option value="OpenTower" ${!eq.attrs.Type||eq.attrs.Type==="OpenTower"?"selected":""}>Open Tower</option><option value="ClosedTower" ${eq.attrs.Type==="ClosedTower"?"selected":""}>Closed Tower</option><option value="ClosedTowerEvaporative" ${eq.attrs.Type==="ClosedTowerEvaporative"?"selected":""}>Closed Tower Evaporative</option></select>
+        <span style="font-size:11px;color:var(--text-dim);">Mod control</span>
+        <select id="eq-modctrl" style="${fs}"><option value="VariableSpeedDrive" ${!eq.attrs.ModCtrl||eq.attrs.ModCtrl==="VariableSpeedDrive"?"selected":""}>Variable Speed Drive</option><option value="TwoSpeed" ${eq.attrs.ModCtrl==="TwoSpeed"?"selected":""}>Two Speed</option><option value="Cycling" ${eq.attrs.ModCtrl==="Cycling"?"selected":""}>Cycling</option><option value="Bypass" ${eq.attrs.ModCtrl==="Bypass"?"selected":""}>Bypass</option></select>
+        <span style="font-size:11px;color:var(--text-dim);">Fan type</span>
+        <select id="eq-fantype" style="${fs}"><option value="Axial" ${!eq.attrs.FanType||eq.attrs.FanType==="Axial"?"selected":""}>Axial</option><option value="Centrifugal" ${eq.attrs.FanType==="Centrifugal"?"selected":""}>Centrifugal</option></select>
+      </div>`;
+      c.querySelector('#eq-type').addEventListener('change',function(){setPlainAttr(eq,"Type",this.value);dirtyRecords.add(eq);updateStatus();renderAll();openModal(b=>buildEquipModal(b,eq));});
+      c.querySelector('#eq-modctrl').addEventListener('change',function(){setPlainAttr(eq,"ModCtrl",this.value);dirtyRecords.add(eq);updateStatus();});
+      c.querySelector('#eq-fantype').addEventListener('change',function(){setPlainAttr(eq,"FanType",this.value);dirtyRecords.add(eq);updateStatus();});
+    } else if(eq.type==="WtrHtr"){
+      const isElecOnly=eq.attrs.Type==="HeatPumpPackaged"||eq.attrs.Type==="HeatPumpSplit";
+      c.innerHTML=`<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center;max-width:320px;">
+        <span style="font-size:11px;color:var(--text-dim);">Type</span>
+        <select id="eq-wh-type" style="${fs}"><option value="Conventional" ${!eq.attrs.Type||eq.attrs.Type==="Conventional"?"selected":""}>Conventional</option><option value="HeatPumpPackaged" ${eq.attrs.Type==="HeatPumpPackaged"?"selected":""}>Heat Pump — Packaged</option><option value="HeatPumpSplit" ${eq.attrs.Type==="HeatPumpSplit"?"selected":""}>Heat Pump — Split</option></select>
+        <span id="wh-fuel-lbl" style="font-size:11px;color:var(--text-dim);"${isElecOnly?" hidden":""}>Fuel</span>
+        <select id="eq-wh-fuel" style="${fs}"${isElecOnly?" hidden":""}><option value="Gas" ${!eq.attrs.FuelSrc||eq.attrs.FuelSrc==="Gas"?"selected":""}>Gas</option><option value="Electric" ${eq.attrs.FuelSrc==="Electric"?"selected":""}>Electric</option></select>
+        <span style="font-size:11px;color:var(--text-dim);">Storage (gal)</span>
+        <input id="eq-wh-stor" type="number" min="0" step="1" style="${fs}" placeholder="optional" value="${eq.attrs.StorCap||""}">
+        <span style="font-size:11px;color:var(--text-dim);">Setpoint (°F)</span>
+        <input id="eq-wh-setp" type="number" min="80" max="180" step="1" style="${fs}" placeholder="optional" value="${eq.attrs.WtrHtrSetPtTemp||""}">
+      </div>`;
+      c.querySelector('#eq-wh-type').addEventListener('change',function(){setPlainAttr(eq,"Type",this.value);dirtyRecords.add(eq);updateStatus();const elec=this.value==="HeatPumpPackaged"||this.value==="HeatPumpSplit";c.querySelector('#wh-fuel-lbl').hidden=elec;c.querySelector('#eq-wh-fuel').hidden=elec;if(elec){setPlainAttr(eq,"FuelSrc","Electric");dirtyRecords.add(eq);}renderAll();openModal(b=>buildEquipModal(b,eq));});
+      c.querySelector('#eq-wh-fuel').addEventListener('change',function(){setPlainAttr(eq,"FuelSrc",this.value);dirtyRecords.add(eq);updateStatus();});
+      c.querySelector('#eq-wh-stor').addEventListener('change',function(){if(this.value)setPlainAttr(eq,"StorCap",parseFloat(this.value));else deletePlainAttr(eq,"StorCap");dirtyRecords.add(eq);updateStatus();});
+      c.querySelector('#eq-wh-setp').addEventListener('change',function(){if(this.value)setPlainAttr(eq,"WtrHtrSetPtTemp",parseFloat(this.value));else deletePlainAttr(eq,"WtrHtrSetPtTemp");dirtyRecords.add(eq);updateStatus();});
+    }
+    box.appendChild(c);
+  }
+
+  // ── Main render ───────────────────────────────────────────────
+  function renderAll(){
+    closeModal();
+    container.innerHTML = "";
+    const wrap = document.createElement('div');
+    wrap.style.cssText = "max-width:900px;";
+    container.appendChild(wrap);
+
+    // ── Action buttons ─────────────────────────────────────────
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = "display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap;";
+    const canCreate = needsAutoCreateLoops(), canWire = needsAutoWireCoils(), canSHW = needsAutoSHW();
+    function makeAutoBtn(label, active, fn){ const b=document.createElement('button'); b.className="btn primary"; if(!active) b.style.opacity="0.45"; b.disabled=!active; b.textContent=label; b.addEventListener('click',fn); return b; }
+    btnRow.appendChild(makeAutoBtn(canCreate?"Auto-create loops":"Loops created ✓", canCreate, ()=>{ autoCreatePlantLoops(doc); updateStatus(); renderAll(); }));
+    btnRow.appendChild(makeAutoBtn(canWire?"Auto-wire coils":"Coils wired ✓",        canWire,   ()=>{ autoWireAllCoils();           renderAll(); }));
+    btnRow.appendChild(makeAutoBtn(canSHW?"Auto-create & wire SHW":"SHW wired ✓",   canSHW,    ()=>{ autoCreateWireSHW();          renderAll(); }));
+    wrap.appendChild(btnRow);
+
+    // ── Loop groups ─────────────────────────────────────────────
+    const fluidLoops = doc.records.filter(r => r.type==="FluidSys");
+    if(!fluidLoops.length){
+      const empty = document.createElement('div');
+      empty.style.cssText = "font-size:12px;color:var(--text-dim);padding:12px 0;";
+      empty.textContent = "No fluid loops — use the buttons above to auto-create, or add one below.";
+      wrap.appendChild(empty);
+    }
+    const groupDefs = [
+      {type:"ChilledWater",    label:"Chilled Water Loops",    color:"#5b9bd5"},
+      {type:"HotWater",        label:"Hot Water Loops",         color:"#e05050"},
+      {type:"CondenserWater",  label:"Condenser Water Loops",   color:"#38a169"},
+      {type:"ServiceHotWater", label:"Service Hot Water Loops", color:"#d97706"},
+    ];
+    for(const gd of groupDefs){
+      const loops = fluidLoops.filter(l => l.attrs.Type===gd.type);
+      if(loops.length) wrap.appendChild(makeTypeGroup(gd.label, loops, gd.color));
+    }
+
+    // ── Add loop ───────────────────────────────────────────────
+    const fsi = "background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius-2);font-family:var(--mono);font-size:12px;";
+    const addCard = document.createElement('div');
+    addCard.style.cssText = "border:1px dashed var(--border);border-radius:var(--radius-2);padding:10px 14px;margin-top:4px;";
+    addCard.innerHTML = `<div style="font-family:var(--mono);font-size:10.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:8px;">Add loop</div><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;"><input type="text" id="nlName" placeholder="Loop name" style="${fsi}width:160px;"><select id="nlType" style="${fsi}"><option value="ChilledWater">ChilledWater</option><option value="HotWater">HotWater</option><option value="CondenserWater">CondenserWater</option><option value="ServiceHotWater">ServiceHotWater</option></select><button class="btn primary" id="nlAdd">Add</button><span id="nlMsg" style="font-size:11px;color:var(--text-dim);"></span></div>`;
+    wrap.appendChild(addCard);
+    addCard.querySelector('#nlAdd').addEventListener('click', ()=>{
+      const name=addCard.querySelector('#nlName').value.trim(), type=addCard.querySelector('#nlType').value, msg=addCard.querySelector('#nlMsg');
+      if(!name){msg.textContent="Enter a name.";return;}
+      if(doc.records.some(r=>r.type==="FluidSys"&&r.name===name)){msg.textContent=`"${name}" exists.`;return;}
+      createFluidLoop(doc,type,name,{}); updateStatus(); renderAll();
+    });
+  }
+
 
   renderAll();
 }
@@ -6711,9 +6547,17 @@ renderStepDetail(WORKFLOW_STEPS[0]);
 .vp-entry ul { margin: 5px 0 0; padding-left: 16px; color: var(--ink-muted, #6E737B); line-height: 1.65; }
 </style>
 
-<div id="ver-badge">v1.4.0</div>
+<div id="ver-badge">v1.5.0</div>
 <div id="ver-panel">
   <div class="vp-title">Changelog</div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.5.0</span><span class="vp-date">2026-08-05</span>
+    <ul>
+      <li>Water-side plant redesign: draggable equipment cards grouped by loop type; drag chillers/boilers/towers between loops of the same type</li>
+      <li>Three smart action buttons: Auto-create loops, Auto-wire coils (new, separate), Auto-create &amp; wire SHW (new)</li>
+      <li>Equipment config and pumping config now open in modal popovers on click</li>
+    </ul>
+  </div>
   <div class="vp-entry">
     <span class="vp-ver">v1.4.0</span><span class="vp-date">2026-08-05</span>
     <ul>
