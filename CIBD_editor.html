@@ -56,6 +56,16 @@
   }
   #topbar .title{font-family:var(--mono);font-size:13px;letter-spacing:0.03em;color:var(--accent);white-space:nowrap;}
   #topbar .filename{font-family:var(--mono);color:var(--text-dim);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;}
+  /* Which compliance ruleset the loaded file targets. Read from the file, never chosen. */
+  #topbar .code-year{
+    font-family:var(--mono);font-size:11px;letter-spacing:0.04em;white-space:nowrap;cursor:help;
+    padding:3px 8px;border-radius:var(--radius-2);
+    background:var(--color-accent-wash);border:1px solid var(--accent);color:var(--color-accent-ink);
+  }
+  #topbar .code-year.uncertain{
+    background:var(--color-signal-stale-wash);border-color:var(--color-signal-stale-mark);color:var(--edited);
+  }
+  #topbar .code-year .cy-note{opacity:0.85;font-size:10px;margin-left:5px;}
   .btn{
     background:var(--panel2);border:1px solid var(--border);color:var(--text);
     padding:6px 12px;border-radius:var(--radius-2);font-size:12px;cursor:pointer;font-family:var(--sans);
@@ -389,6 +399,7 @@
 <div id="app">
   <div id="topbar">
     <div class="title">CBECC .cibd25 EDITOR</div>
+    <div class="code-year" id="codeYearBadge" style="display:none"></div>
     <a class="btn" id="projectsLink" href="/projects.html" style="display:none">← Projects</a>
     <div class="filename" id="filenameLabel">no file loaded</div>
     <button class="btn primary" id="loadBtn">Open .cibd25 file</button>
@@ -597,6 +608,7 @@ const fileInput = document.getElementById('fileInput');
 const loadBtn = document.getElementById('loadBtn');
 const downloadBtn = document.getElementById('downloadBtn');
 const filenameLabel = document.getElementById('filenameLabel');
+const codeYearBadge = document.getElementById('codeYearBadge');
 const typesEl = document.getElementById('types');
 const recordsEl = document.getElementById('records');
 const detailEl = document.getElementById('detail');
@@ -613,7 +625,8 @@ function loadDocFromText(text, filename) {
     doc.codeYear = detectCodeYear(doc.rulesetFilename);
     dirtyRecords.clear();
     activeType = null; activeRecord = null;
-    filenameLabel.textContent = filename + (doc.codeYear ? " — T24-" + doc.codeYear : "");
+    filenameLabel.textContent = filename;
+    renderCodeYearBadge();
     downloadBtn.disabled = false;
     if (IS_SERVER) { saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
     renderTypes();
@@ -1612,6 +1625,47 @@ function detectCodeYear(rulesetFilename){
   if(!m) return null;
   const y = parseInt(m[1], 10);
   return (y === 2019 || y === 2022 || y === 2025 || y === 2028) ? y : null;
+}
+
+// The code year is read from the file, never chosen: it is a property of the model,
+// not a setting. Retargeting a file to another cycle is CBECC's own conversion job.
+// Three states, because two of them are the ones that bite:
+//   detected + tables    -- plain badge, everything downstream is that year's ruleset
+//   detected, no tables  -- 2019/2028: enum lists borrow FALLBACK_CODE_YEAR, defaults don't fill
+//   not detected         -- getCodeYear() falls back to 2025 silently; say so out loud
+function codeYearStatus(){
+  if(!doc) return null;
+  const detected = doc.codeYear;
+  const effective = getCodeYear();
+  const header = doc.rulesetFilename || "(none)";
+  if(!detected){
+    return { year: effective, uncertain: true, note: "assumed",
+      title: 'No recognized code year in this file’s RulesetFilename header (' + header + '). '
+           + 'Falling back to T24-' + effective + ': system types, occupancy lists, and defaults on '
+           + 'screen are the ' + effective + ' ruleset’s. Verify that is what this file targets.' };
+  }
+  if(!hasOccupancyDefaults()){
+    return { year: detected, uncertain: true, note: "partial ruleset",
+      title: 'Code year T24-' + detected + ', read from the RulesetFilename header (' + header + '). '
+           + 'This build has no App 5.4A/5.4C tables for ' + detected + ', so occupancy and ventilation '
+           + 'defaults are left blank rather than borrowed from T24-' + FALLBACK_CODE_YEAR + '. '
+           + (hasRulesetData() ? '' : 'Space-function names shown are the T24-' + FALLBACK_CODE_YEAR + ' list.') };
+  }
+  return { year: detected, uncertain: false, note: "",
+    title: 'Code year T24-' + detected + ', read from the RulesetFilename header (' + header + '). '
+         + 'System types, space-function names, and occupancy/ventilation defaults throughout this '
+         + 'session come from the T24-' + detected + ' ruleset. The code year is a property of the '
+         + 'file — to target a different cycle, convert the file in CBECC.' };
+}
+
+function renderCodeYearBadge(){
+  const s = codeYearStatus();
+  if(!s){ codeYearBadge.style.display = "none"; return; }
+  codeYearBadge.style.display = "";
+  codeYearBadge.classList.toggle("uncertain", s.uncertain);
+  codeYearBadge.innerHTML = 'T24-' + s.year
+    + (s.note ? ' <span class="cy-note">' + s.note + '</span>' : '');
+  codeYearBadge.title = s.title;
 }
 
 // T24-2022: SpcFunc enums from T24N_2022 BEMEnums.txt (Bldg:FuncClassMthd -999 block)
@@ -5346,8 +5400,9 @@ function renderCleanSpaceNamesForm(container){
 function renderOpenFileForm(container){
   const wrap = document.createElement('div');
   if(doc){
+    const cys = codeYearStatus();
     wrap.innerHTML = `
-      <div class="result-summary">Loaded: <strong>${filenameLabel.textContent}</strong> (${doc.records.length} records)</div>
+      <div class="result-summary">Loaded: <strong>${filenameLabel.textContent}</strong> (${doc.records.length} records) &mdash; T24-${cys.year}${cys.note ? ", " + cys.note : ""}</div>
       <button class="btn primary">Open a different file</button>
       <div style="font-size:12px;color:var(--text-dim);margin-top:10px;">Loading a new file resets the workflow (applied-step checkmarks, 3D view, everything below).</div>
     `;
@@ -7456,9 +7511,16 @@ renderStepDetail(WORKFLOW_STEPS[0]);
 .vp-entry ul { margin: 5px 0 0; padding-left: 16px; color: var(--ink-muted, #6E737B); line-height: 1.65; }
 </style>
 
-<div id="ver-badge">v1.17.0</div>
+<div id="ver-badge">v1.17.1</div>
 <div id="ver-panel">
   <div class="vp-title">Changelog</div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.17.1</span><span class="vp-date">2026-08-19</span>
+    <ul>
+      <li>The code year the file targets is now a badge in the top bar rather than a suffix on the filename, so it&rsquo;s legible at a glance in every mode. It is read from the file&rsquo;s <code>RulesetFilename</code> header and is not editable &mdash; the code year is a property of the model, and retargeting a file to another cycle is CBECC&rsquo;s own conversion job</li>
+      <li>The badge turns amber and says why in the two cases that used to pass silently: a header with no recognisable year (the tool falls back to T24-2025 and now admits it), and a year with no Appendix 5.4A/5.4C tables in this build, where occupancy defaults are deliberately left blank</li>
+    </ul>
+  </div>
   <div class="vp-entry">
     <span class="vp-ver">v1.17.0</span><span class="vp-date">2026-08-19</span>
     <ul>
