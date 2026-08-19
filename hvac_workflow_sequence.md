@@ -115,11 +115,26 @@ something real.
 - Create exhaust systems the same way as Stage 1 (`ZnSys`, Type=Exhaust — or `AirSys`
   Type=Exhaust for a central exhaust system serving several zones).
 - Assign zones the same way as Stage 2.
-- **Wire the reference through `VentSysRef`, not `ExhSysRef`** — confirmed against
-  real files that this is the dominant real-world convention (`ExhSysRef` showed up
-  in 1 of 33 checked project files; `VentSysRef` in 5, including pointing at
-  Type=Exhaust systems specifically).
-- Auto-create the nested `Fan`.
+- **Wire the reference through `ExhSysRef`** — *corrected 2026-08-19, superseding
+  the earlier note in this doc that said `VentSysRef`.* The T24_2025 Input Data Model
+  is unambiguous: `ThrmlZn:ExhSysRef` is an ObjectRef restricted to
+  `AirSys:Type = "Exhaust"` / `ZnSys:Type = "Exhaust"`, while `ThrmlZn:VentSysRef`
+  points at the ventilation system (`SysRefStatus = "HVAC"`). A wider corpus sweep
+  agrees: `ExhSysRef` appears in 30 of the 216 reference project files, and
+  `OffLrg-PrkgLabKitchen.cibd25` shows both fields in use side by side on the same
+  model — conditioned zones carry `ExhSysRef = "LabExhaust System"` while the parking
+  garage's unconditioned zone carries `VentSysRef = "PrkgGarVent System"` with
+  `VentSrc = "Forced"`. The earlier 1-of-33 count was drawn from too small a sample.
+- Auto-create the nested `Fan`, and set the parent's `ExhSysType` /
+  `ExhOperMode` / `ExhCtrlMthd`. `ExhCtrlMthd`'s valid set is conditioned on
+  `ExhSysType`: General/Laboratory/CommercialKitchen take the
+  ConstantFlow/VariableFlow fan trio, ParkingGarage takes `NoCOControl`/`COControl`.
+- **Two families, not one.** `Exhaust` is the one Type that exists as both an
+  `AirSys` (central: `AirSeg` with `Type = "Exhaust"` + `Fan`) and a `ZnSys`
+  (zone-level exhaust fan: a bare nested `Fan`, no `AirSeg` — `ZnSys` has no
+  `AirSeg` child in the data model). One `ZnSys` exhaust fan can serve several
+  zones. Confirmed against `OffLrg-PrkgLabKitchen.cibd25` and
+  `OffMed-FanPowerAdj.cibd25` respectively.
 
 This stage can also cover genuine dedicated ventilation (DOAS) the same way — a
 zone's `VentSysRef` pointing at a real `AirSys` (Type=DOASCV/DOASVAV) instead of an
@@ -156,7 +171,26 @@ For each loop type actually needed (`ChilledWater`, `HotWater`, and
    built correctly.
 2. One real example each for Radiant, Baseboard, PassiveBeam, EvaporativeCooler —
    needed before those Stage 3 branches can be built with any confidence.
-3. `AirSys:SubType` (CRAC/CRAH) requirement for Data-function zones — may need to
-   surface as a required field in Stage 1 for computer-room-heavy buildings.
-4. DOAS-specific fields beyond the bare reference — Stage 4 as written only wires
-   the connection; real DOAS sizing/control fields haven't been traced.
+3. ~~`AirSys:SubType` (CRAC/CRAH) requirement for Data-function zones.~~ **Done
+   2026-08-19 (v1.15.0).** Traced and built. `AirSys:SubType` is a Defaulted input
+   whose enum is Packaged3Phase / Split3Phase / Packaged1Phase / Split1Phase / CRAC /
+   CRAH / NA; `Type = "HV"` and `Type = "Exhaust"` are restricted to `NA`, everything
+   else gets the full list. `AirSys:Config` is CondRequired when `SubType = "CRAC"`
+   (eight floor/ceiling-mount options), but no file in the reference corpus writes it,
+   so the tool leaves it blank unless the user picks one. It is *not* a required field
+   — rather, it changes the baseline: `BaselineHVACSystems-T24N.rule` models a
+   Computer Room zone as CRAC when total building computer-room power is < 800 kW and
+   CRAH at or above it (and switches CRAC from SZAC to SZVAVAC above 17.5 kW zone
+   power), and `HVACSecondary-CoilCooling-Capacity.rule` branches CoilClg capacity and
+   efficiency on `SubType = "CRAC"`. The tool therefore *advises* rather than compels:
+   a system serving a `SpcFunc = "Computer Room"` space is flagged when its SubType
+   isn't CRAC or CRAH.
+4. ~~DOAS-specific fields beyond the bare reference.~~ **Partly done 2026-08-19
+   (v1.15.0).** The sizing fields are zone-side, not system-side:
+   `ThrmlZn:SizeForDOAS` (integer flag), `SizeForDOASCtrl`
+   (Neutral / NeutralDehumidifed / Cold — the ruleset's own spelling),
+   `SizeForDOASTempLow` and `SizeForDOASTempHi` (°F, CBECC warns outside 50–90).
+   All four are Optional inputs and none of the 216 reference project files set any of
+   them, so the tool writes nothing until sizing is switched on for a zone. Still
+   untraced: the DOAS system's own control fields (`ClgCtrl` and its reset setpoints
+   are available to DOASCV/DOASVAV, minus `WarmestReset`) and `OACtrl` sizing.

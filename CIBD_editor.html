@@ -2368,23 +2368,6 @@ function unmapSpaceFromSystem(spc){
   }
 }
 
-function mapSpaceToExhaustSystem(spc, sys){
-  const currentZoneName = (spc.attrs.ThrmlZnRef && spc.attrs.ThrmlZnRef !== "- none -") ? spc.attrs.ThrmlZnRef : null;
-  let targetZone = currentZoneName ? doc.records.find(r => r.type === "ThrmlZn" && r.name === currentZoneName) : null;
-  if(!targetZone){
-    targetZone = getOrCreateThrmlZn(doc, "Zn_" + spc.name);
-    setPlainAttr(spc, "ThrmlZnRef", targetZone.name);
-    dirtyRecords.add(spc);
-  }
-  assignZoneToVentSys(doc, targetZone, sys);
-  dirtyRecords.add(targetZone);
-}
-
-function unmapSpaceFromExhaustSystem(spc){
-  const zone = doc.records.find(r => r.type === "ThrmlZn" && r.name === spc.attrs.ThrmlZnRef);
-  if(zone){ unassignZoneFromVentSys(zone); dirtyRecords.add(zone); }
-}
-
 function isSpaceUnassigned(spc){
   if(!spc.attrs.ThrmlZnRef || spc.attrs.ThrmlZnRef === "- none -") return true;
   const zone = doc.records.find(r => r.type === "ThrmlZn" && r.name === spc.attrs.ThrmlZnRef);
@@ -3295,7 +3278,7 @@ function renderThermalZoneForm(container){
   }
 
   // Generic system card for Exhaust / DOAS tabs
-  function makeAssignmentSysCard(sys, getAssignedZones, onDrop, onRemove){
+  function makeAssignmentSysCard(sys, getAssignedZones, onDrop, onRemove, renderExtras){
     const card = document.createElement('div');
     card.style.cssText = "border:1px solid var(--border);border-radius:var(--radius-2);overflow:hidden;";
     const hdr = document.createElement('div');
@@ -3333,7 +3316,152 @@ function renderThermalZoneForm(container){
       })(zones[zi]);
     }
     card.appendChild(body);
+    if(renderExtras) renderExtras(card, zones, sys);
     return card;
+  }
+
+  // Per-zone DOAS sizing (ThrmlZn:SizeForDOAS / SizeForDOASCtrl / SizeForDOASTempLow /
+  // SizeForDOASTempHi). All four are Optional inputs -- CBECC sizes the zone from its
+  // own loads when they're absent, and no file in the reference corpus sets them -- so
+  // nothing is written until sizing is switched on for that zone. Switching it back off
+  // removes all four rather than leaving a stale control or setpoint behind.
+  function renderDoasSizing(card, zones, sys){
+    if(zones.length === 0) return;
+    const box = document.createElement('div');
+    box.style.cssText = "border-top:1px solid var(--border);padding:8px 12px 10px;";
+    const head = document.createElement('div');
+    head.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;";
+    const lbl = document.createElement('div');
+    lbl.style.cssText = "font-family:var(--mono);font-size:10.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--ink-faint);";
+    lbl.textContent = "Zone sizing for DOAS";
+    head.appendChild(lbl);
+    const copyBtn = document.createElement('button');
+    copyBtn.className = "btn";
+    copyBtn.style.cssText = "font-size:10.5px;padding:2px 8px;";
+    copyBtn.textContent = "Copy first row to all";
+    copyBtn.title = "Apply the first zone's sizing settings to every zone on this system";
+    head.appendChild(copyBtn);
+    box.appendChild(head);
+
+    const numStyle = "background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:3px 6px;border-radius:var(--radius-2);font-family:var(--mono);font-size:11px;width:100%;box-sizing:border-box;";
+    const grid = document.createElement('div');
+    grid.dataset.doasSizing = sys.name;
+    grid.style.cssText = "display:grid;grid-template-columns:1fr 74px 150px 84px 84px;gap:4px 8px;align-items:center;";
+    const hdrs = ["Zone", "Size", "Control", "Low \u00B0F", "High \u00B0F"];
+    hdrs.forEach(function(h, i){
+      const c = document.createElement('div');
+      c.style.cssText = "font-size:10px;color:var(--ink-faint);" + (i === 0 ? "" : "text-align:center;");
+      c.textContent = h;
+      grid.appendChild(c);
+    });
+
+    function readNum(v){
+      const n = parseFloat(v);
+      return isFinite(n) ? n : null;
+    }
+
+    zones.forEach(function(zone){
+      const on = String(zone.attrs.SizeForDOAS) === "1";
+      const nameEl = document.createElement('div');
+      nameEl.style.cssText = "font-family:var(--mono);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
+      nameEl.textContent = zone.name;
+      nameEl.title = zone.name;
+      grid.appendChild(nameEl);
+
+      const chkWrap = document.createElement('div');
+      chkWrap.style.cssText = "text-align:center;";
+      const chk = document.createElement('input');
+      chk.type = "checkbox";
+      chk.checked = on;
+      chk.dataset.doasField = "size";
+      chk.dataset.doasZone = zone.name;
+      chk.title = "Size this zone for a dedicated outside-air system";
+      chkWrap.appendChild(chk);
+      grid.appendChild(chkWrap);
+
+      const ctrl = document.createElement('select');
+      ctrl.dataset.doasField = "ctrl";
+      ctrl.dataset.doasZone = zone.name;
+      ctrl.style.cssText = numStyle;
+      ctrl.innerHTML = enumOptions(DOAS_SIZE_CTRLS, zone.attrs.SizeForDOASCtrl || '', '\u2014 CBECC default \u2014');
+      grid.appendChild(ctrl);
+
+      const lo = document.createElement('input');
+      lo.type = "number"; lo.step = "1"; lo.placeholder = "auto";
+      lo.dataset.doasField = "lo";
+      lo.dataset.doasZone = zone.name;
+      lo.style.cssText = numStyle + "text-align:right;";
+      if(zone.attrs.SizeForDOASTempLow !== undefined) lo.value = zone.attrs.SizeForDOASTempLow;
+      grid.appendChild(lo);
+
+      const hi = document.createElement('input');
+      hi.type = "number"; hi.step = "1"; hi.placeholder = "auto";
+      hi.dataset.doasField = "hi";
+      hi.dataset.doasZone = zone.name;
+      hi.style.cssText = numStyle + "text-align:right;";
+      if(zone.attrs.SizeForDOASTempHi !== undefined) hi.value = zone.attrs.SizeForDOASTempHi;
+      grid.appendChild(hi);
+
+      function flagTemp(el){
+        const n = readNum(el.value);
+        const out = n !== null && (n < DOAS_TEMP_WARN_LO || n > DOAS_TEMP_WARN_HI);
+        el.style.borderColor = out ? 'var(--edited)' : 'var(--border)';
+        el.title = out
+          ? 'CBECC warns outside ' + DOAS_TEMP_WARN_LO + '\u2013' + DOAS_TEMP_WARN_HI + ' \u00B0F'
+          : '';
+      }
+
+      function syncEnabled(){
+        const enabled = chk.checked;
+        [ctrl, lo, hi].forEach(function(el){
+          el.disabled = !enabled;
+          el.style.opacity = enabled ? '' : '0.45';
+        });
+      }
+
+      function commit(){
+        if(!chk.checked){
+          ['SizeForDOAS', 'SizeForDOASCtrl', 'SizeForDOASTempLow', 'SizeForDOASTempHi']
+            .forEach(function(k){ deletePlainAttr(zone, k); });
+        } else {
+          setPlainAttr(zone, "SizeForDOAS", 1);
+          if(ctrl.value) setPlainAttr(zone, "SizeForDOASCtrl", ctrl.value);
+          else deletePlainAttr(zone, "SizeForDOASCtrl");
+          const nLo = readNum(lo.value), nHi = readNum(hi.value);
+          if(nLo !== null) setPlainAttr(zone, "SizeForDOASTempLow", nLo);
+          else deletePlainAttr(zone, "SizeForDOASTempLow");
+          if(nHi !== null) setPlainAttr(zone, "SizeForDOASTempHi", nHi);
+          else deletePlainAttr(zone, "SizeForDOASTempHi");
+        }
+        dirtyRecords.add(zone);
+        flagTemp(lo); flagTemp(hi);
+        updateStatus();
+      }
+
+      chk.addEventListener('change', function(){ syncEnabled(); commit(); });
+      ctrl.addEventListener('change', commit);
+      [lo, hi].forEach(function(el){ el.addEventListener('change', commit); });
+      syncEnabled(); flagTemp(lo); flagTemp(hi);
+      zone._doasRow = {chk: chk, ctrl: ctrl, lo: lo, hi: hi, commit: commit, syncEnabled: syncEnabled};
+    });
+
+    copyBtn.addEventListener('click', function(){
+      const first = zones[0] && zones[0]._doasRow;
+      if(!first) return;
+      zones.slice(1).forEach(function(z){
+        const r = z._doasRow;
+        if(!r) return;
+        r.chk.checked = first.chk.checked;
+        r.ctrl.value  = first.ctrl.value;
+        r.lo.value    = first.lo.value;
+        r.hi.value    = first.hi.value;
+        r.syncEnabled();
+        r.commit();
+      });
+    });
+
+    box.appendChild(grid);
+    card.appendChild(box);
   }
 
   function renderExhaustLeft(){
@@ -3393,7 +3521,8 @@ function renderThermalZoneForm(container){
         rightEl.appendChild(makeAssignmentSysCard(sys,
           function(){ return doc.records.filter(function(r){ return r.type === "ThrmlZn" && r.attrs.VentSysRef === sys.name; }); },
           function(zone){ assignZoneToDOAS(doc, zone, sys); },
-          function(zone){ unassignZoneFromDOAS(doc, zone, sys); }
+          function(zone){ unassignZoneFromDOAS(doc, zone, sys); },
+          renderDoasSizing
         ));
       })(systems[si]);
     }
@@ -3451,12 +3580,55 @@ function appendHvacChildren(doc, parentRecord, children){
 // Type metadata: family (AirSys/ZnSys), whether it's single-zone (caps at one
 // zone assignment, gets CtrlZnRef), and whether Stage-3 auto-component-creation
 // is built yet for this Part 1 pass.
+// AirSys:SubType -- verbatim enum from the T24_2025 Input Data Model. The model
+// restricts Type="HV" and Type="Exhaust" to "NA"; every other AirSys type gets the
+// full list. CRAC/CRAH are the computer-room variants: the baseline ruleset picks
+// CRAC when total building computer-room power is < 800 kW and CRAH at or above it
+// (BaselineHVACSystems-T24N.rule), and CoilClg capacity/efficiency rules branch on
+// SubType = "CRAC" (HVACSecondary-CoilCooling-Capacity.rule). Confirmed in real
+// files: OffSml-Data_SZVAV (SZVAVAC/CRAC), OffLrg-PlenumsFPBsData (SZVAVAC/CRAH),
+// OffSml-Data-Economizer (SZAC/CRAC).
+const AIRSYS_SUBTYPES = ["Packaged3Phase", "Split3Phase", "Packaged1Phase", "Split1Phase", "CRAC", "CRAH", "NA"];
+const AIRSYS_SUBTYPE_DEFAULT = "Packaged3Phase";
+
+// AirSys:Config -- CondRequired only when SubType = "CRAC". No file in the reference
+// corpus writes it, so the UI leaves it blank (CBECC derives it) unless explicitly set.
+const CRAC_CONFIGS = [
+  "Floor-Mounted (Downflow)",
+  "Floor-Mounted (Upflow - Ducted)",
+  "Floor-Mounted (Upflow - Nonducted)",
+  "Floor-Mounted (Horizontal)",
+  "Ceiling-Mounted (Ducted Discharge and Ducted Return)",
+  "Ceiling-Mounted (Ducted Discharge and Free Air Return)",
+  "Ceiling-Mounted (Free Air Discharge and Ducted Return)",
+  "Ceiling-Mounted (Free Air Discharge and Free Air Return)",
+];
+
+// Exhaust system properties, shared by AirSys and ZnSys (ExhSysType / ExhOperMode /
+// ExhCtrlMthd). ExhCtrlMthd's valid set is conditioned on ExhSysType.
+const EXH_SYS_TYPES  = ["General", "Laboratory", "CommercialKitchen", "ParkingGarage"];
+const EXH_OPER_MODES = ["DecoupledFromSystem", "CoupledToSystem"];
+const EXH_CTRL_MTHDS = {
+  General:           ["ConstantFlowConstantSpeedFan", "VariableFlowConstantSpeedFan", "VariableFlowVariableSpeedFan"],
+  Laboratory:        ["ConstantFlowConstantSpeedFan", "VariableFlowConstantSpeedFan", "VariableFlowVariableSpeedFan"],
+  CommercialKitchen: ["ConstantFlowConstantSpeedFan", "VariableFlowConstantSpeedFan", "VariableFlowVariableSpeedFan"],
+  ParkingGarage:     ["NoCOControl", "COControl"],
+};
+
+// ThrmlZn DOAS sizing fields (ThrmlZn:SizeForDOAS / SizeForDOASCtrl /
+// SizeForDOASTempLow / SizeForDOASTempHi). All Optional inputs -- CBECC sizes the
+// zone without them -- so nothing is written unless the user turns sizing on.
+// "NeutralDehumidifed" is spelled that way in the ruleset; kept verbatim.
+const DOAS_SIZE_CTRLS   = ["Neutral", "NeutralDehumidifed", "Cold"];
+const DOAS_TEMP_WARN_LO = 50;   // ThrmlZn:SizeForDOASTempLow/Hi warning band, degF
+const DOAS_TEMP_WARN_HI = 90;
+
 const SYSTEM_TYPES = [
   {value: "VRF", family: "ZnSys", label: "VRF indoor unit", singleZone: true, supported: true},
-  {value: "SZAC", family: "AirSys", label: "Packaged DX (SZAC)", singleZone: true, supported: true},
-  {value: "SZHP", family: "AirSys", label: "Packaged Heat Pump (SZHP)", singleZone: true, supported: true},
-  {value: "SZVAVAC", family: "AirSys", label: "Packaged VAV DX (SZVAVAC)", singleZone: true, supported: true},
-  {value: "SZVAVHP", family: "AirSys", label: "Packaged VAV Heat Pump (SZVAVHP)", singleZone: true, supported: true},
+  {value: "SZAC", family: "AirSys", hasSubType: true, label: "Packaged DX (SZAC)", singleZone: true, supported: true},
+  {value: "SZHP", family: "AirSys", hasSubType: true, label: "Packaged Heat Pump (SZHP)", singleZone: true, supported: true},
+  {value: "SZVAVAC", family: "AirSys", hasSubType: true, label: "Packaged VAV DX (SZVAVAC)", singleZone: true, supported: true},
+  {value: "SZVAVHP", family: "AirSys", hasSubType: true, label: "Packaged VAV Heat Pump (SZVAVHP)", singleZone: true, supported: true},
   {value: "PTAC", family: "ZnSys", label: "PTAC", singleZone: true, supported: true},
   {value: "PTHP", family: "ZnSys", label: "PTHP", singleZone: true, supported: true},
   {value: "MiniSplitAC", family: "ZnSys", label: "Mini-split AC", singleZone: true, supported: true},
@@ -3468,14 +3640,27 @@ const SYSTEM_TYPES = [
   {value: "EvaporativeCooler", family: "ZnSys", label: "Evaporative Cooler", singleZone: true, supported: true},
   {value: "FPFC", family: "ZnSys", label: "Fan Coil (FPFC)", singleZone: true, supported: true},
   {value: "WSHP", family: "ZnSys", label: "Water-source HP (WSHP)", singleZone: true, supported: true},
-  {value: "VAV", family: "AirSys", label: "VAV (central, multi-zone)", singleZone: false, supported: true, isVav: true},
-  {value: "PVAV", family: "AirSys", label: "PVAV (central, multi-zone)", singleZone: false, supported: true, isVav: true},
+  {value: "VAV", family: "AirSys", label: "VAV (central, multi-zone)", singleZone: false, supported: true, isVav: true, hasSubType: true},
+  {value: "PVAV", family: "AirSys", label: "PVAV (central, multi-zone)", singleZone: false, supported: true, isVav: true, hasSubType: true},
   {value: "HV", family: "AirSys", label: "Central Heating AHU (HV)", singleZone: false, supported: true, isHv: true},
   {value: "Exhaust", family: "AirSys", label: "Exhaust system (central fan)", singleZone: false, supported: true, isExhaust: true},
-  {value: "DOASCV",  family: "AirSys", label: "DOAS – constant volume",    singleZone: false, supported: true, isDOAS: true},
-  {value: "DOASVAV", family: "AirSys", label: "DOAS – variable air volume", singleZone: false, supported: true, isDOAS: true},
+  // ThrmlZn:ExhSysRef accepts ZnSys:Type="Exhaust" as well as AirSys; one ZnSys
+  // exhaust fan can serve several zones (OffMed-FanPowerAdj.cibd25).
+  {value: "Exhaust", family: "ZnSys", label: "Exhaust fan (zone-level)", singleZone: false, supported: true, isExhaust: true},
+  {value: "DOASCV",  family: "AirSys", label: "DOAS – constant volume",    singleZone: false, supported: true, isDOAS: true, hasSubType: true},
+  {value: "DOASVAV", family: "AirSys", label: "DOAS – variable air volume", singleZone: false, supported: true, isDOAS: true, hasSubType: true},
 ];
-function systemTypeMeta(value){ return SYSTEM_TYPES.find(t => t.value === value); }
+// "Exhaust" is the one Type that exists in both families, so lookups holding a record
+// (or a known family) should pass it. Callers with only a Type string still get the
+// first match, which carries identical isExhaust/supported flags.
+function systemTypeMeta(value, family){
+  if(family){
+    const exact = SYSTEM_TYPES.find(t => t.value === value && t.family === family);
+    if(exact) return exact;
+  }
+  return SYSTEM_TYPES.find(t => t.value === value);
+}
+function sysMeta(rec){ return rec ? systemTypeMeta(rec.attrs.Type, rec.type) : undefined; }
 // -----------------------------------------------------------------------
 // Coil indicator config: per-system-type valid coil options for step 6.
 // cooling/heating = null (no slot), [] (fixed, icon only), or option array.
@@ -3661,8 +3846,8 @@ function changeZoneReheat(doc, zone, newCoilType){
   }
 }
 
-function createSystem(doc, typeValue, name){
-  const meta = systemTypeMeta(typeValue);
+function createSystem(doc, typeValue, name, family){
+  const meta = systemTypeMeta(typeValue, family);
   const rec = makeRecord(meta.family, name);
   setPlainAttr(rec, "Type", typeValue);
   // Same class of bug as getOrCreateThrmlZn: don't blindly append to the
@@ -3711,10 +3896,24 @@ function buildSystemComponents(doc, sys){
     const oactrl = makeRecord("OACtrl", sys.name + " OACtrl");
     appendHvacChildren(doc, sys, [supplySeg, cc, hc, fan, returnSeg, oactrl]);
   } else if(sys.attrs.Type === "Exhaust"){
-    const seg = makeRecord("AirSeg", sys.name + " AirSeg");
-    setPlainAttr(seg, "Type", "Exhaust");
-    const fan = makeRecord("Fan", sys.name + " Fan");
-    appendHvacChildren(doc, sys, [seg, fan]);
+    // Central exhaust (AirSys) confirmed against OffLrg-PrkgLabKitchen.cibd25:
+    //   AirSys[ExhSysType/ExhOperMode/ExhCtrlMthd] -> AirSeg(Type="Exhaust") -> Fan
+    // Zone-level exhaust fan (ZnSys) confirmed against OffMed-FanPowerAdj.cibd25:
+    //   ZnSys -> Fan, with no AirSeg (ZnSys has no AirSeg child in the data model).
+    // Parent properties are only filled when absent, so the rebuild triggered by a
+    // type change doesn't clobber values the user already set.
+    if(sys.attrs.ExhSysType  === undefined) setPlainAttr(sys, "ExhSysType", "General");
+    if(sys.attrs.ExhCtrlMthd === undefined) setPlainAttr(sys, "ExhCtrlMthd", "ConstantFlowConstantSpeedFan");
+    const fan = makeRecord("Fan", sys.name + " ExhFan");
+    setPlainAttr(fan, "ModelingMthd", "StaticPressure");
+    setPlainAttr(fan, "TotStaticPress", 2.5);
+    if(sys.type === "ZnSys"){
+      appendHvacChildren(doc, sys, [fan]);
+    } else {
+      const seg = makeRecord("AirSeg", sys.name + " ExhAirSeg");
+      setPlainAttr(seg, "Type", "Exhaust");
+      appendHvacChildren(doc, sys, [seg, fan]);
+    }
   } else if(sys.attrs.Type === "DOASCV" || sys.attrs.Type === "DOASVAV"){
     // Confirmed structure from OffSml-MultiHVACSys+DOAS.cibd25 and OffSml-PassiveBeams-DOASVAV.cibd25:
     // AirSys → SupAirSeg → SupFan → ExhAirSeg → ExhFan → OACtrl
@@ -4013,16 +4212,22 @@ function renameSystem(doc, sys, newName){
 // first zone is kept (the rest are unassigned — caller should warn the user).
 function changeSystemType(doc, sys, newTypeValue, opts){
   opts = opts || {};
-  const oldMeta = systemTypeMeta(sys.attrs.Type);
-  const newMeta = systemTypeMeta(newTypeValue);
+  const oldMeta = sysMeta(sys);
+  const newMeta = systemTypeMeta(newTypeValue, opts.family);
   if(!newMeta) return;
+  // SubType/Config and the exhaust properties are scoped to a Type; drop any the new
+  // Type no longer permits rather than leaving an invalid value behind.
+  if(!newMeta.hasSubType){ deletePlainAttr(sys, 'SubType'); deletePlainAttr(sys, 'Config'); }
+  if(!newMeta.isExhaust){
+    deletePlainAttr(sys, 'ExhSysType'); deletePlainAttr(sys, 'ExhOperMode'); deletePlainAttr(sys, 'ExhCtrlMthd');
+  }
   const isVavOld     = !!(oldMeta && oldMeta.isVav);
   const isHvOld      = !!(oldMeta && oldMeta.isHv);
   const isExhaustOld = !!(oldMeta && oldMeta.isExhaust);
   const isDoasOld    = !!(oldMeta && oldMeta.isDOAS);
   // Collect served zones before clearing
   const servedZones = isExhaustOld
-    ? doc.records.filter(r => r.type === 'ThrmlZn' && (r.attrs.VentSysRef === sys.name || r.attrs.ExhSysRef === sys.name))
+    ? doc.records.filter(r => r.type === 'ThrmlZn' && r.attrs.ExhSysRef === sys.name)
     : isDoasOld
       ? doc.records.filter(r => r.type === 'ThrmlZn' && r.attrs.VentSysRef === sys.name)
       : doc.records.filter(r => r.type === 'ThrmlZn' &&
@@ -4034,7 +4239,7 @@ function changeSystemType(doc, sys, newTypeValue, opts){
   } else if(isHvOld){
     for(const zn of servedZones) removeZoneFromHvSys(doc, zn, sys);
   } else if(isExhaustOld){
-    for(const zn of servedZones){ deletePlainAttr(zn, 'VentSysRef'); deletePlainAttr(zn, 'ExhSysRef'); }
+    for(const zn of servedZones) deletePlainAttr(zn, 'ExhSysRef');
   } else if(isDoasOld){
     for(const zn of servedZones) unassignZoneFromDOAS(doc, zn, sys);
   } else {
@@ -4066,16 +4271,48 @@ function changeSystemType(doc, sys, newTypeValue, opts){
   dirtyRecords.add(sys);
 }
 
+// Shows or hides the type-conditional rows of an open system edit form, and keeps the
+// exhaust fan-control list in sync with the selected exhaust type (ExhCtrlMthd's valid
+// set is conditioned on ExhSysType in the data model).
+function syncSysEditRows(box, sn){
+  const q = id => box.querySelector('#' + id + '_' + sn);
+  const typeEl = q('est');
+  if(!typeEl) return;
+  const sel = String(typeEl.value).split('|');
+  const meta = systemTypeMeta(sel[0], sel[1]);
+  const show = (lbl, fld, on) => {
+    const l = q(lbl), f = q(fld);
+    if(l) l.style.display = on ? '' : 'none';
+    if(f) f.style.display = on ? '' : 'none';
+  };
+  const hasSub = !!(meta && meta.hasSubType);
+  const isExh  = !!(meta && meta.isExhaust);
+  const subEl  = q('esst');
+  show('esstl', 'esst', hasSub);
+  show('escfl', 'escf', hasSub && !!subEl && subEl.value === 'CRAC');
+  show('esetl', 'eset', isExh);
+  show('eseml', 'esem', isExh);
+  show('esecl', 'esec', isExh);
+  const etEl = q('eset'), ecEl = q('esec');
+  if(isExh && etEl && ecEl){
+    const allowed = EXH_CTRL_MTHDS[etEl.value] || EXH_CTRL_MTHDS.General;
+    const keep = allowed.indexOf(ecEl.value) !== -1 ? ecEl.value : allowed[0];
+    ecEl.innerHTML = enumOptions(allowed, keep);
+  }
+}
+
 // Computes the warning text for an in-progress system-type edit and updates
 // the show/hide state of the cooling-coil sub-select.
 function updateEditWarning(sys, typeEl, clgEl, clgLbl, warnEl){
-  const newMeta = systemTypeMeta(typeEl.value);
-  const oldMeta = systemTypeMeta(sys.attrs.Type);
+  const _sel = String(typeEl.value).split('|');
+  const newTypeVal = _sel[0];
+  const newMeta = systemTypeMeta(newTypeVal, _sel[1]);
+  const oldMeta = sysMeta(sys);
   const showClg = !!(newMeta && newMeta.isVav);
   if(clgEl)  clgEl.style.display  = showClg ? '' : 'none';
   if(clgLbl) clgLbl.style.display = showClg ? '' : 'none';
   let warn = '';
-  if(typeEl.value !== sys.attrs.Type){
+  if(newTypeVal !== sys.attrs.Type){
     const oldSingle = !!(oldMeta && oldMeta.singleZone);
     const newSingle = !!(newMeta && newMeta.singleZone);
     const oldMulti  = !!(oldMeta && (oldMeta.isVav || oldMeta.isHv));
@@ -4089,7 +4326,7 @@ function updateEditWarning(sys, typeEl, clgEl, clgLbl, warnEl){
       warn = 'Zone preserved; each space will get its own terminal unit.';
     }
     const FLUID_TYPES = new Set(['VAV','PVAV','FPFC','WSHP','Radiant','Baseboard','PassiveBeam','HV']);
-    const newHasFluid = newMeta && FLUID_TYPES.has(typeEl.value);
+    const newHasFluid = newMeta && FLUID_TYPES.has(newTypeVal);
     const oldHasFluid = oldMeta && FLUID_TYPES.has(sys.attrs.Type);
     if(newHasFluid){
       if(warn) warn += ' ';
@@ -4100,22 +4337,6 @@ function updateEditWarning(sys, typeEl, clgEl, clgLbl, warnEl){
     }
   }
   if(warnEl){ warnEl.textContent = warn; warnEl.style.display = warn ? '' : 'none'; }
-}
-
-// Exhaust systems reference an EXISTING zone rather than forcing a merge --
-// find-or-create that space's own zone (its current one, or a fresh 1:1
-// default), then point that zone's VentSysRef (plain attr, not indexed) at
-// the exhaust system. Multiple spaces keep their own separate zones here,
-// unlike the mandatory merge for single-zone conditioning types.
-function assignZoneToVentSys(doc, zone, sys){
-  setPlainAttr(zone, "VentSysRef", sys.name);
-  if(!sys._componentsBuilt){
-    buildSystemComponents(doc, sys);
-    sys._componentsBuilt = true;
-  }
-}
-function unassignZoneFromVentSys(zone){
-  if(zone.attrs.VentSysRef !== undefined) deletePlainAttr(zone, "VentSysRef");
 }
 
 // Sets the zone<->system reference (always direct, confirmed universal
@@ -4346,6 +4567,28 @@ function deleteFluidLoop(doc, fluidSys){
   doc.records.splice(idx, end - idx);
 }
 
+// AirSys:SubType only changes the model for computer-room zones: the baseline ruleset
+// models those as CRAC (building computer-room power < 800 kW) or CRAH (>= 800 kW),
+// and CoilClg capacity/efficiency rules branch on SubType = "CRAC". Leaving SubType at
+// the packaged default on a system serving a Computer Room space therefore compares the
+// proposed design against a baseline it wasn't built for.
+function systemServesComputerRoom(doc, sys){
+  const zoneNames = new Set(doc.records.filter(r => r.type === "ThrmlZn" &&
+    r.attrs.PriAirCondgSysRef && r.attrs.PriAirCondgSysRef.__indexed &&
+    r.attrs.PriAirCondgSysRef.values[1] === sys.name).map(z => z.name));
+  if(zoneNames.size === 0) return false;
+  return doc.records.some(r => r.type === "Spc" && zoneNames.has(r.attrs.ThrmlZnRef) &&
+    r.attrs.SpcFunc === "Computer Room");
+}
+
+// <option> markup for a ruleset enum, with an optional leading blank row meaning
+// "leave unset and let CBECC default it". Values are written verbatim.
+function enumOptions(values, current, blankLabel){
+  const head = blankLabel ? `<option value=""${current ? "" : " selected"}>${blankLabel}</option>` : "";
+  return head + values.map(v =>
+    `<option value="${v}"${v === current ? " selected" : ""}>${v}</option>`).join("");
+}
+
 function renderHVACSystemsForm(container){
   if(!doc){ container.innerHTML = '<div class="warn-line">Load a file first.</div>'; return; }
   const wrap = document.createElement('div');
@@ -4366,8 +4609,10 @@ function renderHVACSystemsForm(container){
   const typeSelect = createBox.querySelector('#sysTypeSelect');
   const clgCoilSelect = createBox.querySelector('#sysClgCoilSelect');
   typeSelect.innerHTML = SYSTEM_TYPES.map(t =>
-    `<option value="${t.value}">${t.label}${t.supported ? "" : "  (manual setup only \u2014 not yet automated)"}</option>`
+    `<option value="${t.value}|${t.family}">${t.label}${t.supported ? "" : "  (manual setup only \u2014 not yet automated)"}</option>`
   ).join("");
+  // Option values are "<Type>|<family>"; family disambiguates AirSys vs ZnSys "Exhaust".
+  const splitSel = v => { const p = String(v).split("|"); return {type: p[0], family: p[1]}; };
   clgCoilSelect.innerHTML = `
     <option value="ChilledWater">ChilledWater cooling coil</option>
     <option value="DirectExpansion">DirectExpansion cooling coil</option>
@@ -4379,10 +4624,11 @@ function renderHVACSystemsForm(container){
   [nameInput].forEach(el => el.style.cssText += "background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:var(--radius-2);font-family:var(--mono);font-size:12px;");
   typeSelect.style.cssText += "background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:var(--radius-2);font-family:var(--mono);font-size:12px;";
   typeSelect.addEventListener('change', () => {
-    const meta = systemTypeMeta(typeSelect.value);
+    const sel = splitSel(typeSelect.value);
+    const meta = systemTypeMeta(sel.type, sel.family);
     clgCoilSelect.style.display = (meta && meta.isVav) ? "" : "none";
     if(meta && meta.isVav){
-      clgCoilSelect.value = (typeSelect.value === "PVAV") ? "DirectExpansion" : "ChilledWater";
+      clgCoilSelect.value = (sel.type === "PVAV") ? "DirectExpansion" : "ChilledWater";
     }
   });
   createBox.querySelector('button').addEventListener('click', () => {
@@ -4392,8 +4638,9 @@ function renderHVACSystemsForm(container){
     if(doc.records.some(r => (r.type === "AirSys" || r.type === "ZnSys") && r.name === name)){
       resultEl.textContent = `A system named "${name}" already exists.`; return;
     }
-    const sys = createSystem(doc, typeSelect.value, name);
-    const meta = systemTypeMeta(typeSelect.value);
+    const sel = splitSel(typeSelect.value);
+    const sys = createSystem(doc, sel.type, name, sel.family);
+    const meta = systemTypeMeta(sel.type, sel.family);
     if(meta && meta.isVav) sys._clgCoilType = clgCoilSelect.value;
     nameInput.value = "";
     resultEl.textContent = `Created "${name}".`;
@@ -4464,29 +4711,40 @@ function renderHVACSystemsForm(container){
     sysListBox.style.cssText = "margin-bottom:16px;border:1px solid var(--border);border-radius:var(--radius-2);background:var(--panel);padding:12px 14px;";
     let html = `<div style="font-family:var(--mono);font-size:10.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:8px;">Systems (${systems.length})</div>`;
     for(const sys of systems){
-      const meta = systemTypeMeta(sys.attrs.Type);
+      const meta = sysMeta(sys);
       const isExhaust = !!(meta && meta.isExhaust);
       const isDOAS    = !!(meta && meta.isDOAS);
       let servedNames;
       if(isExhaust){
-        servedNames = doc.records.filter(r => r.type === "ThrmlZn" && (r.attrs.VentSysRef === sys.name || r.attrs.ExhSysRef === sys.name)).map(z => z.name);
+        servedNames = doc.records.filter(r => r.type === "ThrmlZn" && r.attrs.ExhSysRef === sys.name).map(z => z.name);
       } else if(isDOAS){
         servedNames = doc.records.filter(r => r.type === "ThrmlZn" && r.attrs.VentSysRef === sys.name).map(z => z.name);
       } else {
         servedNames = doc.records.filter(r => r.type === "ThrmlZn" && r.attrs.PriAirCondgSysRef && r.attrs.PriAirCondgSysRef.__indexed && r.attrs.PriAirCondgSysRef.values[1] === sys.name).map(z => z.name);
       }
       const overCap = !isExhaust && !isDOAS && meta && meta.singleZone && servedNames.length > 1;
+      const needsCRAC = !!(meta && meta.hasSubType) && sys.attrs.SubType !== 'CRAC' &&
+        sys.attrs.SubType !== 'CRAH' && systemServesComputerRoom(doc, sys);
       const tag = isExhaust ? `<span style="color:var(--color-accent-ink);font-size:10px;text-transform:uppercase;letter-spacing:0.04em;"> exhaust</span>`
                 : isDOAS    ? `<span style="color:var(--color-accent-ink);font-size:10px;text-transform:uppercase;letter-spacing:0.04em;"> doas</span>` : "";
       const safeName = sys.name.replace(/[^a-z0-9]/gi, '_');
 
       if(editingSysName === sys.name){
         const typeOpts = SYSTEM_TYPES.map(t =>
-          `<option value="${t.value}"${t.value === sys.attrs.Type ? ' selected' : ''}>${t.label}</option>`
+          `<option value="${t.value}|${t.family}"${t.value === sys.attrs.Type && t.family === sys.type ? ' selected' : ''}>${t.label}</option>`
         ).join('');
         const isVav = !!(meta && meta.isVav);
         const _existingClg = getSysCoils(doc, sys).clg;
         const curClg = sys._clgCoilType || (_existingClg && _existingClg.attrs.Type) || (sys.attrs.Type === 'PVAV' ? 'DirectExpansion' : 'ChilledWater');
+        const hasSub    = !!(meta && meta.hasSubType);
+        const isExhEdit = !!(meta && meta.isExhaust);
+        const curSub    = sys.attrs.SubType || '';
+        const curConfig = sys.attrs.Config  || '';
+        const curExhTyp = sys.attrs.ExhSysType  || 'General';
+        const curExhMod = sys.attrs.ExhOperMode || '';
+        const curExhCtl = sys.attrs.ExhCtrlMthd || '';
+        const exhCtlOpts = EXH_CTRL_MTHDS[curExhTyp] || EXH_CTRL_MTHDS.General;
+        const rowHide = on => on ? '' : 'display:none';
         html += `
           <div style="border:1px solid var(--color-accent);border-radius:var(--radius-2);background:var(--panel2);padding:10px 12px;margin:4px 0;">
             <div style="display:grid;grid-template-columns:80px 1fr;gap:6px 10px;align-items:center;max-width:500px;margin-bottom:8px;">
@@ -4499,6 +4757,16 @@ function renderHVACSystemsForm(container){
                 <option value="ChilledWater"${curClg === 'ChilledWater' ? ' selected' : ''}>ChilledWater</option>
                 <option value="DirectExpansion"${curClg === 'DirectExpansion' ? ' selected' : ''}>DirectExpansion</option>
               </select>
+              <span id="esstl_${safeName}" style="font-size:11px;color:var(--text-dim);${rowHide(hasSub)}">SubType</span>
+              <select id="esst_${safeName}" style="${iStyleSys}width:100%;${rowHide(hasSub)}">${enumOptions(AIRSYS_SUBTYPES, curSub, '\u2014 CBECC default (' + AIRSYS_SUBTYPE_DEFAULT + ') \u2014')}</select>
+              <span id="escfl_${safeName}" style="font-size:11px;color:var(--text-dim);${rowHide(hasSub && curSub === 'CRAC')}">Config</span>
+              <select id="escf_${safeName}" style="${iStyleSys}width:100%;${rowHide(hasSub && curSub === 'CRAC')}">${enumOptions(CRAC_CONFIGS, curConfig, '\u2014 CBECC default \u2014')}</select>
+              <span id="esetl_${safeName}" style="font-size:11px;color:var(--text-dim);${rowHide(isExhEdit)}">Exh type</span>
+              <select id="eset_${safeName}" style="${iStyleSys}width:100%;${rowHide(isExhEdit)}">${enumOptions(EXH_SYS_TYPES, curExhTyp)}</select>
+              <span id="eseml_${safeName}" style="font-size:11px;color:var(--text-dim);${rowHide(isExhEdit)}">Oper mode</span>
+              <select id="esem_${safeName}" style="${iStyleSys}width:100%;${rowHide(isExhEdit)}">${enumOptions(EXH_OPER_MODES, curExhMod, '\u2014 CBECC default \u2014')}</select>
+              <span id="esecl_${safeName}" style="font-size:11px;color:var(--text-dim);${rowHide(isExhEdit)}">Fan control</span>
+              <select id="esec_${safeName}" style="${iStyleSys}width:100%;${rowHide(isExhEdit)}">${enumOptions(exhCtlOpts, curExhCtl)}</select>
             </div>
             <div id="esw_${safeName}" style="font-size:11px;color:var(--edited);margin-bottom:6px;display:none;"></div>
             <div style="display:flex;gap:6px;">
@@ -4520,6 +4788,9 @@ function renderHVACSystemsForm(container){
             <span style="color:var(--text-dim);font-size:11px;">${sys.attrs.Type}</span>
             ${zoneBadge}
             ${overCap ? '<span style="color:var(--edited);font-size:10px;margin-left:4px;">&#9888; single-zone type, multiple zones</span>' : ""}
+            ${needsCRAC ? '<span title="The baseline ruleset models Computer Room zones as CRAC (building computer-room power below 800 kW) or CRAH (800 kW and above). Set SubType to match the design." style="color:var(--edited);font-size:10px;margin-left:4px;">&#9888; serves a Computer Room &mdash; set SubType CRAC/CRAH</span>' : ""}
+            ${sys.attrs.SubType ? `<span style="color:var(--text-dim);font-size:10px;">${sys.attrs.SubType}</span>` : ""}
+            ${isExhaust && sys.attrs.ExhSysType ? `<span style="color:var(--text-dim);font-size:10px;">${sys.attrs.ExhSysType}</span>` : ""}
           </span>
           <div style="display:flex;gap:4px;flex-shrink:0;">
             <button class="btn" data-edit="${sys.name}" style="font-size:11px;padding:3px 8px;">Edit</button>
@@ -4565,14 +4836,39 @@ function renderHVACSystemsForm(container){
         const clgEl  = sysListBox.querySelector('#esc_' + sn);
         const warnEl = sysListBox.querySelector('#esw_' + sn);
         const newName = nameEl ? nameEl.value.trim() : sys.name;
-        const newType = typeEl ? typeEl.value : sys.attrs.Type;
+        const newSel  = typeEl ? String(typeEl.value).split('|') : [sys.attrs.Type, sys.type];
+        const newType = newSel[0];
+        const newFam  = newSel[1];
         const newClg  = clgEl  ? clgEl.value  : undefined;
         if(!newName) return;
         if(newName !== sys.name && doc.records.some(r => (r.type === "AirSys" || r.type === "ZnSys") && r.name === newName)){
           if(warnEl){ warnEl.textContent = `A system named "${newName}" already exists.`; warnEl.style.display = ''; }
           return;
         }
-        if(newType !== sys.attrs.Type) changeSystemType(doc, sys, newType, {clgCoilType: newClg});
+        if(newType !== sys.attrs.Type || newFam !== sys.type){
+          changeSystemType(doc, sys, newType, {clgCoilType: newClg, family: newFam});
+        }
+        // Type-conditional properties, written after the type change so they land on
+        // the rebuilt record. A blank select means "leave unset, let CBECC default it".
+        const newMetaSave = sysMeta(sys);
+        const setOrClear = (key, val) => {
+          if(val) setPlainAttr(sys, key, val); else deletePlainAttr(sys, key);
+        };
+        if(newMetaSave && newMetaSave.hasSubType){
+          const subEl = sysListBox.querySelector('#esst_' + sn);
+          const cfgEl = sysListBox.querySelector('#escf_' + sn);
+          setOrClear('SubType', subEl ? subEl.value : '');
+          setOrClear('Config', (subEl && subEl.value === 'CRAC' && cfgEl) ? cfgEl.value : '');
+        }
+        if(newMetaSave && newMetaSave.isExhaust){
+          const etEl = sysListBox.querySelector('#eset_' + sn);
+          const emEl = sysListBox.querySelector('#esem_' + sn);
+          const ecEl = sysListBox.querySelector('#esec_' + sn);
+          setOrClear('ExhSysType',  etEl ? etEl.value : '');
+          setOrClear('ExhOperMode', emEl ? emEl.value : '');
+          setOrClear('ExhCtrlMthd', ecEl ? ecEl.value : '');
+        }
+        dirtyRecords.add(sys);
         if(newName !== sys.name)       renameSystem(doc, sys, newName);
         editingSysName = null;
         renderSystemList(); renderVrfBox();
@@ -4589,7 +4885,14 @@ function renderHVACSystemsForm(container){
         const clgEl  = sysListBox.querySelector('#esc_' + sn);
         const clgLbl = sysListBox.querySelector('#escl_' + sn);
         const warnEl = sysListBox.querySelector('#esw_' + sn);
-        if(typeEl) typeEl.addEventListener('change', () => updateEditWarning(sys, typeEl, clgEl, clgLbl, warnEl));
+        if(typeEl) typeEl.addEventListener('change', () => {
+          updateEditWarning(sys, typeEl, clgEl, clgLbl, warnEl);
+          syncSysEditRows(sysListBox, sn);
+        });
+        const subEl = sysListBox.querySelector('#esst_' + sn);
+        if(subEl) subEl.addEventListener('change', () => syncSysEditRows(sysListBox, sn));
+        const etEl = sysListBox.querySelector('#eset_' + sn);
+        if(etEl) etEl.addEventListener('change', () => syncSysEditRows(sysListBox, sn));
       }
     }
   }
@@ -6643,6 +6946,14 @@ const WORKFLOW_STEPS = [
       "Create a system (name + type), edit it, or delete it. Required subcomponents (coils, fan, air " +
       "segments, outdoor-air control) are built automatically when a system is created. " +
       "VRF indoor units get a condensing-unit picker here. " +
+      "Exhaust comes in two flavors &mdash; a central <code>AirSys</code> (air segment + fan) or a zone-level " +
+      "<code>ZnSys</code> exhaust fan (bare fan) &mdash; and both expose <code>ExhSysType</code>, " +
+      "<code>ExhOperMode</code>, and <code>ExhCtrlMthd</code>, with the fan-control choices narrowed to " +
+      "what the selected exhaust type allows. Air systems expose <code>SubType</code>, including " +
+      "<code>CRAC</code>/<code>CRAH</code> for computer-room units and the CRAC-only <code>Config</code> " +
+      "field; a system serving a Computer Room space is flagged if its SubType isn&rsquo;t one of those, " +
+      "since the baseline ruleset models those zones as CRAC below 800&nbsp;kW building computer-room " +
+      "power and CRAH at or above it. " +
       "Space-to-system assignment happens in the next step (Assign Zones &amp; Systems).",
     renderForm: renderHVACSystemsForm,
   },
@@ -6655,7 +6966,12 @@ const WORKFLOW_STEPS = [
       "For multi-zone systems (VAV/HV): drop onto the system header to create a new zone, or drop onto an existing zone card to merge that space into the zone. " +
       "For single-zone systems: all spaces drop into the system&rsquo;s one shared zone. " +
       "Zone names are click-to-edit; drag a space back to the left panel to unassign it. " +
-      "Use &ldquo;Create one zone per unassigned space&rdquo; to auto-populate unzoned spaces without assigning them to a system.",
+      "Use &ldquo;Create one zone per unassigned space&rdquo; to auto-populate unzoned spaces without assigning them to a system. " +
+      "The Exhaust tab wires zones through <code>ThrmlZn:ExhSysRef</code>; the Outside Air / DOAS tab wires " +
+      "<code>VentSysRef</code> and adds per-zone DOAS sizing &mdash; <code>SizeForDOAS</code>, " +
+      "<code>SizeForDOASCtrl</code>, and the low/high design temperatures. Those four are optional inputs, " +
+      "so nothing is written until you switch sizing on for a zone, and temperatures outside CBECC&rsquo;s " +
+      "50&ndash;90&nbsp;&deg;F warning band are flagged.",
     renderForm: renderThermalZoneForm,
   },
   {
@@ -6946,9 +7262,20 @@ renderStepDetail(WORKFLOW_STEPS[0]);
 .vp-entry ul { margin: 5px 0 0; padding-left: 16px; color: var(--ink-muted, #6E737B); line-height: 1.65; }
 </style>
 
-<div id="ver-badge">v1.14.0</div>
+<div id="ver-badge">v1.15.0</div>
 <div id="ver-panel">
   <div class="vp-title">Changelog</div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.15.0</span><span class="vp-date">2026-08-19</span>
+    <ul>
+      <li>Exhaust systems: zone-level exhaust fans (ZnSys Type=Exhaust) alongside central exhaust AirSys, each built with the subcomponents its family actually takes</li>
+      <li>Exhaust properties exposed on the system edit form &mdash; ExhSysType (General / Laboratory / CommercialKitchen / ParkingGarage), ExhOperMode, and ExhCtrlMthd, with the fan-control list constrained by the selected exhaust type</li>
+      <li>AirSys:SubType exposed, including CRAC / CRAH for computer-room systems, plus the CRAC-only Config field</li>
+      <li>Systems serving a Computer Room space are flagged when SubType isn&rsquo;t CRAC or CRAH &mdash; the baseline ruleset models those zones as CRAC below 800 kW building computer-room power and CRAH at or above it</li>
+      <li>Per-zone DOAS sizing on the Outside Air / DOAS tab: SizeForDOAS, SizeForDOASCtrl, and the low/high design temperatures, flagged outside CBECC&rsquo;s 50&ndash;90 &deg;F warning band, with copy-to-all</li>
+      <li>Fixed: exhaust systems were wired through VentSysRef in places and ExhSysRef in others. ExhSysRef is the field the data model restricts to Type=Exhaust systems; changing an exhaust system&rsquo;s type no longer clears an unrelated DOAS assignment on the same zone</li>
+    </ul>
+  </div>
   <div class="vp-entry">
     <span class="vp-ver">v1.14.0</span><span class="vp-date">2026-08-05</span>
     <ul>

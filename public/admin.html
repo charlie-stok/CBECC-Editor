@@ -458,9 +458,20 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
 .vp-entry ul { margin: 5px 0 0; padding-left: 16px; color: var(--ink-muted, #6E737B); line-height: 1.65; }
 </style>
 
-<div id="ver-badge">v1.14.0</div>
+<div id="ver-badge">v1.15.0</div>
 <div id="ver-panel">
   <div class="vp-title">Changelog</div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.15.0</span><span class="vp-date">2026-08-19</span>
+    <ul>
+      <li>Exhaust systems: zone-level exhaust fans (ZnSys Type=Exhaust) alongside central exhaust AirSys, each built with the subcomponents its family actually takes</li>
+      <li>Exhaust properties exposed on the system edit form &mdash; ExhSysType (General / Laboratory / CommercialKitchen / ParkingGarage), ExhOperMode, and ExhCtrlMthd, with the fan-control list constrained by the selected exhaust type</li>
+      <li>AirSys:SubType exposed, including CRAC / CRAH for computer-room systems, plus the CRAC-only Config field</li>
+      <li>Systems serving a Computer Room space are flagged when SubType isn&rsquo;t CRAC or CRAH &mdash; the baseline ruleset models those zones as CRAC below 800 kW building computer-room power and CRAH at or above it</li>
+      <li>Per-zone DOAS sizing on the Outside Air / DOAS tab: SizeForDOAS, SizeForDOASCtrl, and the low/high design temperatures, flagged outside CBECC&rsquo;s 50&ndash;90 &deg;F warning band, with copy-to-all</li>
+      <li>Fixed: exhaust systems were wired through VentSysRef in places and ExhSysRef in others. ExhSysRef is the field the data model restricts to Type=Exhaust systems; changing an exhaust system&rsquo;s type no longer clears an unrelated DOAS assignment on the same zone</li>
+    </ul>
+  </div>
   <div class="vp-entry">
     <span class="vp-ver">v1.14.0</span><span class="vp-date">2026-08-05</span>
     <ul>
