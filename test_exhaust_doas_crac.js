@@ -50,10 +50,13 @@ async function run(){
   ok("systemTypeMeta('Exhaust','ZnSys').family is ZnSys",   systemTypeMeta('Exhaust', 'ZnSys').family === 'ZnSys');
   ok("both are flagged isExhaust",
      systemTypeMeta('Exhaust', 'AirSys').isExhaust && systemTypeMeta('Exhaust', 'ZnSys').isExhaust);
+  const hasSubType  = win.hasSubType;
+  const subTypesFor = win.subTypesFor;
   ok("HV and Exhaust are excluded from SubType (data model allows only NA)",
-     !systemTypeMeta('HV').hasSubType && !systemTypeMeta('Exhaust', 'AirSys').hasSubType);
-  ok("SZAC/SZVAVAC/VAV carry hasSubType",
-     systemTypeMeta('SZAC').hasSubType && systemTypeMeta('SZVAVAC').hasSubType && systemTypeMeta('VAV').hasSubType);
+     !hasSubType(systemTypeMeta('HV')) && !hasSubType(systemTypeMeta('Exhaust', 'AirSys')));
+  ok("SZAC/SZVAVAC/VAV support SubType",
+     hasSubType(systemTypeMeta('SZAC')) && hasSubType(systemTypeMeta('SZVAVAC')) &&
+     hasSubType(systemTypeMeta('VAV')));
 
   // ---- 2. Central exhaust (AirSys) ---------------------------------------
   console.log("\n[2] Central exhaust AirSys structure");

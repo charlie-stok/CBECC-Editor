@@ -3591,6 +3591,17 @@ function appendHvacChildren(doc, parentRecord, children){
 const AIRSYS_SUBTYPES = ["Packaged3Phase", "Split3Phase", "Packaged1Phase", "Split1Phase", "CRAC", "CRAH", "NA"];
 const AIRSYS_SUBTYPE_DEFAULT = "Packaged3Phase";
 
+// The same Type name can carry different SubType sets in the two families, and
+// several Types are restricted to a subset, so the options live on the catalog entry
+// rather than in one global list. All verbatim from the Input Data Model's
+// AirSys:SubType / ZnSys:SubType conditional blocks.
+const SUBTYPES_PKG_SPLIT = ["Packaged3Phase", "Split3Phase", "Packaged1Phase", "Split1Phase"];
+const SUBTYPES_SPV       = ["Packaged3Phase", "Packaged1Phase"];       // SPVAC / SPVHP
+const SUBTYPES_WSHP      = ["Packaged3Phase", "Packaged1Phase", "NA"];
+const SUBTYPES_FURNACE   = ["Wall", "Floor", "Room", "Other"];
+const SUBTYPES_RADIANT   = ["Embedded", "Panel"];
+const SUBTYPES_EVAP      = ["Standard IEC", "Advanced IEC"];
+
 // AirSys:Config -- CondRequired only when SubType = "CRAC". No file in the reference
 // corpus writes it, so the UI leaves it blank (CBECC derives it) unless explicitly set.
 const CRAC_CONFIGS = [
@@ -3625,30 +3636,43 @@ const DOAS_TEMP_WARN_HI = 90;
 
 const SYSTEM_TYPES = [
   {value: "VRF", family: "ZnSys", label: "VRF indoor unit", singleZone: true, supported: true},
-  {value: "SZAC", family: "AirSys", hasSubType: true, label: "Packaged DX (SZAC)", singleZone: true, supported: true},
-  {value: "SZHP", family: "AirSys", hasSubType: true, label: "Packaged Heat Pump (SZHP)", singleZone: true, supported: true},
-  {value: "SZVAVAC", family: "AirSys", hasSubType: true, label: "Packaged VAV DX (SZVAVAC)", singleZone: true, supported: true},
-  {value: "SZVAVHP", family: "AirSys", hasSubType: true, label: "Packaged VAV Heat Pump (SZVAVHP)", singleZone: true, supported: true},
+  {value: "SZAC", family: "AirSys", subTypes: AIRSYS_SUBTYPES, subTypeDefault: AIRSYS_SUBTYPE_DEFAULT, label: "Packaged DX (SZAC)", singleZone: true, supported: true},
+  {value: "SZHP", family: "AirSys", subTypes: AIRSYS_SUBTYPES, subTypeDefault: AIRSYS_SUBTYPE_DEFAULT, label: "Packaged Heat Pump (SZHP)", singleZone: true, supported: true},
+  {value: "SZDFHP", family: "AirSys", subTypes: AIRSYS_SUBTYPES, subTypeDefault: AIRSYS_SUBTYPE_DEFAULT, label: "Packaged Dual-Fuel HP (SZDFHP)", singleZone: true, supported: true},
+  {value: "SZVAVAC", family: "AirSys", subTypes: AIRSYS_SUBTYPES, subTypeDefault: AIRSYS_SUBTYPE_DEFAULT, label: "Packaged VAV DX (SZVAVAC)", singleZone: true, supported: true},
+  {value: "SZVAVHP", family: "AirSys", subTypes: AIRSYS_SUBTYPES, subTypeDefault: AIRSYS_SUBTYPE_DEFAULT, label: "Packaged VAV Heat Pump (SZVAVHP)", singleZone: true, supported: true},
+  {value: "SZVAVDFHP", family: "AirSys", subTypes: AIRSYS_SUBTYPES, subTypeDefault: AIRSYS_SUBTYPE_DEFAULT, label: "Packaged VAV Dual-Fuel HP (SZVAVDFHP)", singleZone: true, supported: true},
+  // Single package vertical units. The data model restricts their SubType to the two
+  // packaged options, and Analysis-Control.rule simulates them as SZAC/SZHP when they
+  // are an AirSys and PTAC/PTHP when they are a ZnSys.
+  {value: "SPVAC", family: "AirSys", subTypes: SUBTYPES_SPV, subTypeDefault: "Packaged3Phase", label: "Single Package Vertical AC (SPVAC)", singleZone: true, supported: true},
+  {value: "SPVHP", family: "AirSys", subTypes: SUBTYPES_SPV, subTypeDefault: "Packaged3Phase", label: "Single Package Vertical HP (SPVHP)", singleZone: true, supported: true},
+  // Zone-level packaged units. ZnSys:SZAC is the second most common ZnSys type in the
+  // reference corpus (35 records) and was missing from this catalog entirely.
+  {value: "SZAC", family: "ZnSys", subTypes: SUBTYPES_PKG_SPLIT, subTypeDefault: "Split1Phase", label: "Packaged DX, zone-level (SZAC)", singleZone: true, supported: true},
+  {value: "SZHP", family: "ZnSys", subTypes: SUBTYPES_PKG_SPLIT, subTypeDefault: "Split1Phase", label: "Packaged Heat Pump, zone-level (SZHP)", singleZone: true, supported: true},
+  {value: "SPVAC", family: "ZnSys", subTypes: SUBTYPES_SPV, subTypeDefault: "Packaged3Phase", label: "Single Package Vertical AC, zone-level (SPVAC)", singleZone: true, supported: true},
+  {value: "SPVHP", family: "ZnSys", subTypes: SUBTYPES_SPV, subTypeDefault: "Packaged3Phase", label: "Single Package Vertical HP, zone-level (SPVHP)", singleZone: true, supported: true},
   {value: "PTAC", family: "ZnSys", label: "PTAC", singleZone: true, supported: true},
   {value: "PTHP", family: "ZnSys", label: "PTHP", singleZone: true, supported: true},
   {value: "MiniSplitAC", family: "ZnSys", label: "Mini-split AC", singleZone: true, supported: true},
   {value: "MiniSplitHP", family: "ZnSys", label: "Mini-split HP", singleZone: true, supported: true},
-  {value: "Furnace", family: "ZnSys", label: "Furnace", singleZone: true, supported: true},
-  {value: "Radiant", family: "ZnSys", label: "Radiant", singleZone: true, supported: true},
+  {value: "Furnace", family: "ZnSys", subTypes: SUBTYPES_FURNACE, subTypeDefault: "Wall", label: "Furnace", singleZone: true, supported: true},
+  {value: "Radiant", family: "ZnSys", subTypes: SUBTYPES_RADIANT, subTypeDefault: "Embedded", label: "Radiant", singleZone: true, supported: true},
   {value: "Baseboard", family: "ZnSys", label: "Baseboard", singleZone: true, supported: true},
   {value: "PassiveBeam", family: "ZnSys", label: "Passive Beam", singleZone: true, supported: true},
-  {value: "EvaporativeCooler", family: "ZnSys", label: "Evaporative Cooler", singleZone: true, supported: true},
+  {value: "EvaporativeCooler", family: "ZnSys", subTypes: SUBTYPES_EVAP, subTypeDefault: "Standard IEC", label: "Evaporative Cooler", singleZone: true, supported: true},
   {value: "FPFC", family: "ZnSys", label: "Fan Coil (FPFC)", singleZone: true, supported: true},
-  {value: "WSHP", family: "ZnSys", label: "Water-source HP (WSHP)", singleZone: true, supported: true},
-  {value: "VAV", family: "AirSys", label: "VAV (central, multi-zone)", singleZone: false, supported: true, isVav: true, hasSubType: true},
-  {value: "PVAV", family: "AirSys", label: "PVAV (central, multi-zone)", singleZone: false, supported: true, isVav: true, hasSubType: true},
+  {value: "WSHP", family: "ZnSys", subTypes: SUBTYPES_WSHP, subTypeDefault: "NA", label: "Water-source HP (WSHP)", singleZone: true, supported: true},
+  {value: "VAV", family: "AirSys", label: "VAV (central, multi-zone)", singleZone: false, supported: true, isVav: true, subTypes: AIRSYS_SUBTYPES, subTypeDefault: AIRSYS_SUBTYPE_DEFAULT},
+  {value: "PVAV", family: "AirSys", label: "PVAV (central, multi-zone)", singleZone: false, supported: true, isVav: true, subTypes: AIRSYS_SUBTYPES, subTypeDefault: AIRSYS_SUBTYPE_DEFAULT},
   {value: "HV", family: "AirSys", label: "Central Heating AHU (HV)", singleZone: false, supported: true, isHv: true},
   {value: "Exhaust", family: "AirSys", label: "Exhaust system (central fan)", singleZone: false, supported: true, isExhaust: true},
   // ThrmlZn:ExhSysRef accepts ZnSys:Type="Exhaust" as well as AirSys; one ZnSys
   // exhaust fan can serve several zones (OffMed-FanPowerAdj.cibd25).
   {value: "Exhaust", family: "ZnSys", label: "Exhaust fan (zone-level)", singleZone: false, supported: true, isExhaust: true},
-  {value: "DOASCV",  family: "AirSys", label: "DOAS – constant volume",    singleZone: false, supported: true, isDOAS: true, hasSubType: true},
-  {value: "DOASVAV", family: "AirSys", label: "DOAS – variable air volume", singleZone: false, supported: true, isDOAS: true, hasSubType: true},
+  {value: "DOASCV",  family: "AirSys", label: "DOAS – constant volume",    singleZone: false, supported: true, isDOAS: true, subTypes: AIRSYS_SUBTYPES, subTypeDefault: AIRSYS_SUBTYPE_DEFAULT},
+  {value: "DOASVAV", family: "AirSys", label: "DOAS – variable air volume", singleZone: false, supported: true, isDOAS: true, subTypes: AIRSYS_SUBTYPES, subTypeDefault: AIRSYS_SUBTYPE_DEFAULT},
 ];
 // "Exhaust" is the one Type that exists in both families, so lookups holding a record
 // (or a known family) should pass it. Callers with only a Type string still get the
@@ -3661,6 +3685,10 @@ function systemTypeMeta(value, family){
   return SYSTEM_TYPES.find(t => t.value === value);
 }
 function sysMeta(rec){ return rec ? systemTypeMeta(rec.attrs.Type, rec.type) : undefined; }
+// A Type supports SubType exactly when the catalog gives it an option list. The data
+// model restricts AirSys HV and Exhaust to "NA", so those carry none.
+function subTypesFor(meta){ return (meta && meta.subTypes) || null; }
+function hasSubType(meta){ return !!(meta && meta.subTypes && meta.subTypes.length); }
 // -----------------------------------------------------------------------
 // Coil indicator config: per-system-type valid coil options for step 6.
 // cooling/heating = null (no slot), [] (fixed, icon only), or option array.
@@ -3867,6 +3895,30 @@ function createSystem(doc, typeValue, name, family){
   return rec;
 }
 
+// Packaged single-zone types, keyed by Type. `htg` is the primary heating coil;
+// `supp` is the supplemental coil a heat pump falls back on, created as a sibling
+// CoilHtg and linked from the primary's HtPumpSuppCoilHtgRef.
+//
+// The DF ("dual fuel") variants are exactly the HP variants with a gas furnace as
+// the backup instead of resistance heat -- that substitution is the whole difference,
+// confirmed from the ruleset's own baseline library (Library_HVAC-T24N.rule), where
+// ResBaseAirSys_SZHP pairs a HeatPump coil with a Resistance SuppCoilHtg and
+// ResBaseAirSys_SZDFHP pairs it with a Furnace one.
+//
+// SPVAC/SPVHP appear in no corpus file, so their shape follows the simulation mapping
+// in Analysis-Control.rule, which models them as SZAC/SZHP as an AirSys and PTAC/PTHP
+// as a ZnSys.
+const PACKAGED_SZ_SPECS = {
+  SZAC:      {htg: "Furnace"},
+  SZHP:      {htg: "HeatPump", supp: "Resistance"},
+  SZDFHP:    {htg: "HeatPump", supp: "Furnace"},
+  SZVAVAC:   {htg: "Furnace"},
+  SZVAVHP:   {htg: "HeatPump", supp: "Resistance"},
+  SZVAVDFHP: {htg: "HeatPump", supp: "Furnace"},
+  SPVAC:     {htg: "Furnace"},
+  SPVHP:     {htg: "HeatPump", supp: "Resistance"},
+};
+
 // Builds (or rebuilds -- old components are removed first) the Stage-3
 // subcomponents for a system, per its Type. Only VRF and packaged single-zone
 // DX are implemented in this pass.
@@ -3882,19 +3934,50 @@ function buildSystemComponents(doc, sys){
     setPlainAttr(hc, "Type", "VRF");
     const fan = makeRecord("Fan", sys.name + "-F");
     appendHvacChildren(doc, sys, [cc, hc, fan]);
-  } else if(["SZAC", "SZHP", "SZVAVAC", "SZVAVHP"].includes(sys.attrs.Type)){
-    const isHP = sys.attrs.Type === "SZHP" || sys.attrs.Type === "SZVAVHP";
+  } else if(PACKAGED_SZ_SPECS[sys.attrs.Type] && sys.type === "AirSys"){
+    // Verified against CUAC-MF36Unit_3Story_NGAS-CZ09.cibd25 (a real SZHP):
+    //   AirSys -> AirSeg(Supply) -> CoilClg(DX) -> CoilHtg(HeatPump) ->
+    //             CoilHtg(supplemental) -> Fan -> AirSeg(Return) -> OACtrl
+    // The earlier "HeatPump coil" inference here was right, but the supplemental
+    // coil was missing: 627 of 627 SZHP and 17 of 19 SZVAVHP heating coils in the
+    // reference corpus carry HtPumpSuppCoilHtgRef pointing at a sibling CoilHtg.
+    const spec = PACKAGED_SZ_SPECS[sys.attrs.Type];
     const supplySeg = makeRecord("AirSeg", sys.name + " Supply AirSeg");
+    setPlainAttr(supplySeg, "Type", "Supply");
     const cc = makeRecord("CoilClg", sys.name + " CoilClg");
     setPlainAttr(cc, "Type", "DirectExpansion");
     const hc = makeRecord("CoilHtg", sys.name + " CoilHtg");
-    // Inferred from the ZnSys:Type CHECKCODE, not independently verified against
-    // a real SZHP example file: HP variants need a "HeatPump" coil.
-    setPlainAttr(hc, "Type", isHP ? "HeatPump" : "Furnace");
+    setPlainAttr(hc, "Type", spec.htg);
+    const kids = [supplySeg, cc, hc];
+    if(spec.supp){
+      const supp = makeRecord("CoilHtg", sys.name + " HPSuppHtgCoil");
+      setPlainAttr(supp, "Type", spec.supp);
+      setPlainAttr(hc, "HtPumpSuppCoilHtgRef", supp.name);
+      kids.push(supp);
+    }
     const fan = makeRecord("Fan", sys.name + " Fan");
     const returnSeg = makeRecord("AirSeg", sys.name + " Return AirSeg");
+    setPlainAttr(returnSeg, "Type", "Return");
     const oactrl = makeRecord("OACtrl", sys.name + " OACtrl");
-    appendHvacChildren(doc, sys, [supplySeg, cc, hc, fan, returnSeg, oactrl]);
+    setPlainAttr(oactrl, "AirSegSupRef", supplySeg.name);
+    setPlainAttr(oactrl, "AirSegRetRef", returnSeg.name);
+    kids.push(fan, returnSeg, oactrl);
+    appendHvacChildren(doc, sys, kids);
+  } else if(PACKAGED_SZ_SPECS[sys.attrs.Type] && sys.type === "ZnSys"){
+    // Zone-level packaged unit. Shape confirmed across all 35 ZnSys:SZAC records in
+    // the corpus: CoilClg(DirectExpansion) -> CoilHtg(Furnace) -> Fan, with the
+    // parent carrying FanCtrl = "Cycling". No AirSeg or OACtrl -- ZnSys takes
+    // neither as a child in the data model. Zone-level units are not paired with a
+    // supplemental coil in any corpus example, so none is created here.
+    const spec = PACKAGED_SZ_SPECS[sys.attrs.Type];
+    if(sys.attrs.FanCtrl === undefined) setPlainAttr(sys, "FanCtrl", "Cycling");
+    const cc = makeRecord("CoilClg", sys.name + " CoilClg");
+    setPlainAttr(cc, "Type", "DirectExpansion");
+    const hc = makeRecord("CoilHtg", sys.name + " CoilHtg");
+    setPlainAttr(hc, "Type", spec.htg);
+    const fan = makeRecord("Fan", sys.name + " Fan");
+    setPlainAttr(fan, "CtrlMthd", "ConstantVolume");
+    appendHvacChildren(doc, sys, [cc, hc, fan]);
   } else if(sys.attrs.Type === "Exhaust"){
     // Central exhaust (AirSys) confirmed against OffLrg-PrkgLabKitchen.cibd25:
     //   AirSys[ExhSysType/ExhOperMode/ExhCtrlMthd] -> AirSeg(Type="Exhaust") -> Fan
@@ -4217,7 +4300,11 @@ function changeSystemType(doc, sys, newTypeValue, opts){
   if(!newMeta) return;
   // SubType/Config and the exhaust properties are scoped to a Type; drop any the new
   // Type no longer permits rather than leaving an invalid value behind.
-  if(!newMeta.hasSubType){ deletePlainAttr(sys, 'SubType'); deletePlainAttr(sys, 'Config'); }
+  const keptSubTypes = subTypesFor(newMeta) || [];
+  if(sys.attrs.SubType !== undefined && keptSubTypes.indexOf(sys.attrs.SubType) === -1){
+    deletePlainAttr(sys, 'SubType');
+  }
+  if(sys.attrs.SubType !== 'CRAC') deletePlainAttr(sys, 'Config');
   if(!newMeta.isExhaust){
     deletePlainAttr(sys, 'ExhSysType'); deletePlainAttr(sys, 'ExhOperMode'); deletePlainAttr(sys, 'ExhCtrlMthd');
   }
@@ -4285,9 +4372,17 @@ function syncSysEditRows(box, sn){
     if(l) l.style.display = on ? '' : 'none';
     if(f) f.style.display = on ? '' : 'none';
   };
-  const hasSub = !!(meta && meta.hasSubType);
+  const hasSub = hasSubType(meta);
   const isExh  = !!(meta && meta.isExhaust);
   const subEl  = q('esst');
+  if(hasSub && subEl){
+    // The option set is per-Type, so repopulate rather than just show/hide, keeping
+    // the current pick only when the new Type still allows it.
+    const opts = subTypesFor(meta) || [];
+    const keep = opts.indexOf(subEl.value) !== -1 ? subEl.value : '';
+    const dflt = (meta && meta.subTypeDefault) || '';
+    subEl.innerHTML = enumOptions(opts, keep, '\u2014 CBECC default (' + dflt + ') \u2014');
+  }
   show('esstl', 'esst', hasSub);
   show('escfl', 'escf', hasSub && !!subEl && subEl.value === 'CRAC');
   show('esetl', 'eset', isExh);
@@ -4723,7 +4818,8 @@ function renderHVACSystemsForm(container){
         servedNames = doc.records.filter(r => r.type === "ThrmlZn" && r.attrs.PriAirCondgSysRef && r.attrs.PriAirCondgSysRef.__indexed && r.attrs.PriAirCondgSysRef.values[1] === sys.name).map(z => z.name);
       }
       const overCap = !isExhaust && !isDOAS && meta && meta.singleZone && servedNames.length > 1;
-      const needsCRAC = !!(meta && meta.hasSubType) && sys.attrs.SubType !== 'CRAC' &&
+      const needsCRAC = hasSubType(meta) && (meta.subTypes || []).indexOf('CRAC') !== -1 &&
+        sys.attrs.SubType !== 'CRAC' &&
         sys.attrs.SubType !== 'CRAH' && systemServesComputerRoom(doc, sys);
       const tag = isExhaust ? `<span style="color:var(--color-accent-ink);font-size:10px;text-transform:uppercase;letter-spacing:0.04em;"> exhaust</span>`
                 : isDOAS    ? `<span style="color:var(--color-accent-ink);font-size:10px;text-transform:uppercase;letter-spacing:0.04em;"> doas</span>` : "";
@@ -4736,7 +4832,9 @@ function renderHVACSystemsForm(container){
         const isVav = !!(meta && meta.isVav);
         const _existingClg = getSysCoils(doc, sys).clg;
         const curClg = sys._clgCoilType || (_existingClg && _existingClg.attrs.Type) || (sys.attrs.Type === 'PVAV' ? 'DirectExpansion' : 'ChilledWater');
-        const hasSub    = !!(meta && meta.hasSubType);
+        const hasSub    = hasSubType(meta);
+        const subOpts   = subTypesFor(meta) || [];
+        const subDef    = (meta && meta.subTypeDefault) || '';
         const isExhEdit = !!(meta && meta.isExhaust);
         const curSub    = sys.attrs.SubType || '';
         const curConfig = sys.attrs.Config  || '';
@@ -4758,7 +4856,7 @@ function renderHVACSystemsForm(container){
                 <option value="DirectExpansion"${curClg === 'DirectExpansion' ? ' selected' : ''}>DirectExpansion</option>
               </select>
               <span id="esstl_${safeName}" style="font-size:11px;color:var(--text-dim);${rowHide(hasSub)}">SubType</span>
-              <select id="esst_${safeName}" style="${iStyleSys}width:100%;${rowHide(hasSub)}">${enumOptions(AIRSYS_SUBTYPES, curSub, '\u2014 CBECC default (' + AIRSYS_SUBTYPE_DEFAULT + ') \u2014')}</select>
+              <select id="esst_${safeName}" style="${iStyleSys}width:100%;${rowHide(hasSub)}">${enumOptions(subOpts, curSub, '\u2014 CBECC default (' + subDef + ') \u2014')}</select>
               <span id="escfl_${safeName}" style="font-size:11px;color:var(--text-dim);${rowHide(hasSub && curSub === 'CRAC')}">Config</span>
               <select id="escf_${safeName}" style="${iStyleSys}width:100%;${rowHide(hasSub && curSub === 'CRAC')}">${enumOptions(CRAC_CONFIGS, curConfig, '\u2014 CBECC default \u2014')}</select>
               <span id="esetl_${safeName}" style="font-size:11px;color:var(--text-dim);${rowHide(isExhEdit)}">Exh type</span>
@@ -4854,7 +4952,7 @@ function renderHVACSystemsForm(container){
         const setOrClear = (key, val) => {
           if(val) setPlainAttr(sys, key, val); else deletePlainAttr(sys, key);
         };
-        if(newMetaSave && newMetaSave.hasSubType){
+        if(hasSubType(newMetaSave)){
           const subEl = sysListBox.querySelector('#esst_' + sn);
           const cfgEl = sysListBox.querySelector('#escf_' + sn);
           setOrClear('SubType', subEl ? subEl.value : '');
@@ -7262,9 +7360,20 @@ renderStepDetail(WORKFLOW_STEPS[0]);
 .vp-entry ul { margin: 5px 0 0; padding-left: 16px; color: var(--ink-muted, #6E737B); line-height: 1.65; }
 </style>
 
-<div id="ver-badge">v1.15.0</div>
+<div id="ver-badge">v1.16.0</div>
 <div id="ver-panel">
   <div class="vp-title">Changelog</div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.16.0</span><span class="vp-date">2026-08-19</span>
+    <ul>
+      <li>Added the packaged system types that were missing from the creator: SZDFHP and SZVAVDFHP (dual-fuel heat pumps), SPVAC and SPVHP (single package vertical), and zone-level ZnSys variants of SZAC, SZHP, SPVAC and SPVHP</li>
+      <li>ZnSys SZAC was the notable gap &mdash; 35 records across the reference corpus, more than PTHP or MiniSplit, with none of it reachable before</li>
+      <li>Fixed: heat-pump air systems were built without their supplemental heating coil. 627 of 627 SZHP and 17 of 19 SZVAVHP heating coils in the corpus carry <code>HtPumpSuppCoilHtgRef</code> pointing at a sibling <code>CoilHtg</code>; SZHP and SZVAVHP now get a Resistance backup, and the dual-fuel variants a Furnace one</li>
+      <li>Packaged air systems now set <code>AirSeg:Type</code> and wire <code>OACtrl</code> to their supply and return segments, which were previously left blank</li>
+      <li><code>SubType</code> options are now per-Type rather than one shared list &mdash; SPVAC/SPVHP offer only the two packaged options, zone-level units drop CRAC/CRAH, and Furnace, Radiant and EvaporativeCooler get their own vocabularies (Wall/Floor/Room/Other, Embedded/Panel, Standard/Advanced IEC)</li>
+      <li>Changing a system&rsquo;s Type now drops a SubType the new Type doesn&rsquo;t allow, instead of leaving an invalid value on the record</li>
+    </ul>
+  </div>
   <div class="vp-entry">
     <span class="vp-ver">v1.15.0</span><span class="vp-date">2026-08-19</span>
     <ul>

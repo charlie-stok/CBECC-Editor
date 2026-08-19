@@ -36,12 +36,18 @@ stages.
 |---|---|---|
 | VAV / PVAV | `AirSys` | VAV, PVAV |
 | Fan Coil (central, non-VRF) | `AirSys` | HV |
-| Packaged DX (single zone) | `AirSys` | SZAC, SZHP, SZVAVAC, SZVAVHP |
+| Packaged DX (single zone) | `AirSys` | SZAC, SZHP, SZDFHP, SZVAVAC, SZVAVHP, SZVAVDFHP |
+| Single package vertical | `AirSys` or `ZnSys` | SPVAC, SPVHP |
+| Packaged DX (zone-level) | `ZnSys` | SZAC, SZHP |
 | VRF indoor unit | `ZnSys` | VRF |
 | Fan Coil (zone-level) | `ZnSys` | FPFC |
 | WSHP indoor unit | `ZnSys` | WSHP |
 | PTAC / PTHP | `ZnSys` | PTAC, PTHP |
 | Furnace / Radiant / Baseboard / etc. | `ZnSys` | (matches selection) |
+
+Several `Type` values live in **both** families with different meanings and different
+component sets — `SZAC`, `SZHP`, `SPVAC`, `SPVHP` and `Exhaust`. The family is
+therefore part of the user's pick, not something derivable from the `Type` string.
 
 `Type` is `Compulsory` in CBECC — the record isn't valid without it, so this has to
 be forced at creation, not left as an optional field to fill in later.
@@ -77,12 +83,28 @@ This is the "unlock" logic — branches entirely on the Stage 1 Type choice.
   by name rather than positional nesting, so it needs its own explicit UI control,
   not just an auto-unlock.
 
-**Packaged DX (`AirSys`, Type=SZAC/SZHP/etc.):**
+**Packaged DX (`AirSys`, Type=SZAC/SZHP/SZDFHP/SZVAV*/SPVAC/SPVHP):**
 - Auto-create `AirSeg` (supply) → nested `CoilClg` (Type=DirectExpansion) + `CoilHtg`
   (Type=Furnace or HeatPump, depending on whether it's an HP variant) + `Fan`.
-- Auto-create `AirSeg` (return).
-- Auto-create `OACtrl`.
+- **Heat-pump variants also need a supplemental `CoilHtg`**, created as a sibling of
+  the primary and linked from its `HtPumpSuppCoilHtgRef`. *Added 2026-08-19 (v1.16.0)
+  — this was missing.* It isn't optional in practice: 627 of 627 `SZHP` and 17 of 19
+  `SZVAVHP` heating coils in the reference corpus carry the reference. The backup is
+  `Resistance` for SZHP/SZVAVHP/SPVHP and `Furnace` for the dual-fuel SZDFHP/SZVAVDFHP
+  — that substitution is the entire difference between HP and DFHP, per the ruleset's
+  own baseline library (`ResBaseAirSys_SZHP` vs `ResBaseAirSys_SZDFHP` in
+  `Library_HVAC-T24N.rule`).
+- Auto-create `AirSeg` (return), and set `Type` on both segments.
+- Auto-create `OACtrl`, wired to the supply and return segment names.
 - No fluid loop, no plant prompt — self-contained.
+
+**Packaged DX (`ZnSys`, Type=SZAC/SZHP/SPVAC/SPVHP):**
+- Auto-create nested `CoilClg` (DirectExpansion) + `CoilHtg` + `Fan` (ConstantVolume),
+  and set `FanCtrl = "Cycling"` on the parent. No `AirSeg`, no `OACtrl` — `ZnSys` takes
+  neither as a child.
+- Confirmed across all 35 `ZnSys:SZAC` records in the corpus, which are unanimous on
+  the shape, on `SubType = "Split1Phase"` and on `FanCtrl = "Cycling"`.
+- No supplemental heating coil: no zone-level unit in the corpus has one.
 
 **VAV / PVAV / HV (`AirSys`, multi-zone):**
 - Auto-create the supply/return `AirSeg` pair, nested `Fan`.
@@ -185,6 +207,16 @@ For each loop type actually needed (`ChilledWater`, `HotWater`, and
    efficiency on `SubType = "CRAC"`. The tool therefore *advises* rather than compels:
    a system serving a `SpcFunc = "Computer Room"` space is flagged when its SubType
    isn't CRAC or CRAH.
+4b. **Still open: `ZnSys:VentilationOnly`.** Deliberately not added as a catalog type
+   in v1.16.0. It isn't a normal system — `Library_HVAC-T24N.rule` carries a block
+   headed "AirSystem for `ZnSys:Type = 'VentilationOnly'`" (`PropVentOnlyAirSys`) which
+   is a full `DOASCV` `AirSys` with `IsAllOA = 1`, its own supply/return segments, fans,
+   `OACtrl` with `EconoCtrlMthd = "NoEconomizer"`, an `HtRcvry` and a `TrmlUnit`. So
+   CBECC expands the ZnSys into a separate air system rather than nesting components
+   under it. No project file in the 216-file corpus uses it, and the DOAS step already
+   covers the same ground through `VentSysRef`. Trace how CBECC round-trips one before
+   building it.
+
 4. ~~DOAS-specific fields beyond the bare reference.~~ **Partly done 2026-08-19
    (v1.15.0).** The sizing fields are zone-side, not system-side:
    `ThrmlZn:SizeForDOAS` (integer flag), `SizeForDOASCtrl`

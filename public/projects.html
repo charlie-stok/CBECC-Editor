@@ -450,9 +450,20 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
 .vp-entry ul { margin: 5px 0 0; padding-left: 16px; color: var(--ink-muted, #6E737B); line-height: 1.65; }
 </style>
 
-<div id="ver-badge">v1.15.0</div>
+<div id="ver-badge">v1.16.0</div>
 <div id="ver-panel">
   <div class="vp-title">Changelog</div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.16.0</span><span class="vp-date">2026-08-19</span>
+    <ul>
+      <li>Added the packaged system types that were missing from the creator: SZDFHP and SZVAVDFHP (dual-fuel heat pumps), SPVAC and SPVHP (single package vertical), and zone-level ZnSys variants of SZAC, SZHP, SPVAC and SPVHP</li>
+      <li>ZnSys SZAC was the notable gap &mdash; 35 records across the reference corpus, more than PTHP or MiniSplit, with none of it reachable before</li>
+      <li>Fixed: heat-pump air systems were built without their supplemental heating coil. 627 of 627 SZHP and 17 of 19 SZVAVHP heating coils in the corpus carry <code>HtPumpSuppCoilHtgRef</code> pointing at a sibling <code>CoilHtg</code>; SZHP and SZVAVHP now get a Resistance backup, and the dual-fuel variants a Furnace one</li>
+      <li>Packaged air systems now set <code>AirSeg:Type</code> and wire <code>OACtrl</code> to their supply and return segments, which were previously left blank</li>
+      <li><code>SubType</code> options are now per-Type rather than one shared list &mdash; SPVAC/SPVHP offer only the two packaged options, zone-level units drop CRAC/CRAH, and Furnace, Radiant and EvaporativeCooler get their own vocabularies (Wall/Floor/Room/Other, Embedded/Panel, Standard/Advanced IEC)</li>
+      <li>Changing a system&rsquo;s Type now drops a SubType the new Type doesn&rsquo;t allow, instead of leaving an invalid value on the record</li>
+    </ul>
+  </div>
   <div class="vp-entry">
     <span class="vp-ver">v1.15.0</span><span class="vp-date">2026-08-19</span>
     <ul>
