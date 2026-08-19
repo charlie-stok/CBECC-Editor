@@ -6,3 +6,6 @@ _tmp_check.js
 *.cibd22
 *.cibd28
 *.ribd25
+
+# Claude Code: project launch config is shared; local permissions are per-machine
+.claude/settings.local.json
