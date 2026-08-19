@@ -53,13 +53,22 @@ async function run(){
   ok("Blr.FluidSegOutRef = PrimSupSeg", hwBlr && hwBlr.attrs.FluidSegOutRef === "Test HW Loop PrimSupSeg");
 
   // -----------------------------------------------------------------------
-  // 3. wireCoilsToLoop — HotWater coils all get wired
+  // 3. A second loop of a type leaves existing demand wiring alone
   // -----------------------------------------------------------------------
+  // This file already ships a HotWater loop (BaseHWSystem), so "Test HW Loop" is the
+  // SECOND of its type. createFluidLoop's isFirstOfType guard deliberately skips
+  // auto-wiring there, so a new loop can't steal demand equipment off the existing
+  // one. The first-of-type path that does wire is covered in section 9.
   const hwCoils = appDoc.records.filter(r => r.type === "CoilHtg" && r.attrs.Type === "HotWater");
   ok("HW coils exist in real file", hwCoils.length > 0);
-  // The real file's coils are already wired to the original HW loop; createFluidLoop re-wires to our new loop
-  ok("CoilHtg wired to new HW loop supply", hwCoils.every(c => c.attrs.FluidSegInRef === "Test HW Loop PrimSupSeg"));
-  ok("CoilHtg wired to new HW loop return", hwCoils.every(c => c.attrs.FluidSegOutRef === "Test HW Loop PrimRetSeg"));
+  const origHwSup = hwCoils[0].attrs.FluidSegInRef;
+  const origHwRet = hwCoils[0].attrs.FluidSegOutRef;
+  ok("HW coils start wired to the file's own loop",
+     !!origHwSup && origHwSup !== "Test HW Loop PrimSupSeg");
+  ok("second HW loop leaves coil supply refs alone",
+     hwCoils.every(c => c.attrs.FluidSegInRef === origHwSup));
+  ok("second HW loop leaves coil return refs alone",
+     hwCoils.every(c => c.attrs.FluidSegOutRef === origHwRet));
 
   // -----------------------------------------------------------------------
   // 4. createFluidLoop — ChilledWater, air-cooled
@@ -77,10 +86,17 @@ async function run(){
   ok("Chlr.EvapFluidSegInRef = PrimRetSeg",  chWChlr.attrs.EvapFluidSegInRef === "Test ChW Loop PrimRetSeg");
   ok("Chlr.EvapFluidSegOutRef = PrimSupSeg", chWChlr.attrs.EvapFluidSegOutRef === "Test ChW Loop PrimSupSeg");
 
+  // Same second-of-type guard as the HW case above — the file ships BaseChWSystem.
   const chWCoils = appDoc.records.filter(r => r.type === "CoilClg" && r.attrs.Type === "ChilledWater");
   ok("ChW coils exist in real file", chWCoils.length > 0);
-  ok("CoilClg wired to new ChW loop supply", chWCoils.every(c => c.attrs.FluidSegInRef === "Test ChW Loop PrimSupSeg"));
-  ok("CoilClg wired to new ChW loop return", chWCoils.every(c => c.attrs.FluidSegOutRef === "Test ChW Loop PrimRetSeg"));
+  const origChWSup = chWCoils[0].attrs.FluidSegInRef;
+  const origChWRet = chWCoils[0].attrs.FluidSegOutRef;
+  ok("ChW coils start wired to the file's own loop",
+     !!origChWSup && origChWSup !== "Test ChW Loop PrimSupSeg");
+  ok("second ChW loop leaves coil supply refs alone",
+     chWCoils.every(c => c.attrs.FluidSegInRef === origChWSup));
+  ok("second ChW loop leaves coil return refs alone",
+     chWCoils.every(c => c.attrs.FluidSegOutRef === origChWRet));
 
   // -----------------------------------------------------------------------
   // 5. createFluidLoop — CondenserWater; verify HtRej wiring
@@ -117,8 +133,14 @@ async function run(){
   ok("Chlr appears in output",          serialized.includes('Chlr   "Test ChW Loop Chlr"'));
   ok("Blr appears in output",           serialized.includes('Blr   "Test HW Loop Blr"'));
   ok("FluidSeg supply appears in output", serialized.includes('FluidSeg   "Test HW Loop PrimSupSeg"'));
-  ok("CoilHtg wired ref in output",     serialized.includes('FluidSegInRef = "Test HW Loop PrimSupSeg"'));
-  ok("CoilClg wired ref in output",     serialized.includes('FluidSegInRef = "Test ChW Loop PrimSupSeg"'));
+  // The coils are still on the file's original loops (section 3), so those are the
+  // refs that must survive serialization.
+  ok("CoilHtg ref in output",           serialized.includes('FluidSegInRef = "' + origHwSup + '"'));
+  ok("CoilClg ref in output",           serialized.includes('FluidSegInRef = "' + origChWSup + '"'));
+  ok("no coil was silently moved onto the second HW loop",
+     !serialized.includes('FluidSegInRef = "Test HW Loop PrimSupSeg"'));
+  ok("no coil was silently moved onto the second ChW loop",
+     !serialized.includes('FluidSegInRef = "Test ChW Loop PrimSupSeg"'));
 
   const reparsed = parseDoc(serialized);
   ok("Re-parsed doc has records",      reparsed.records.length > 0);
@@ -127,27 +149,65 @@ async function run(){
   ok("Blr survives round-trip",          reparsed.records.some(r => r.type === "Blr" && r.name === "Test HW Loop Blr"));
   ok("Chlr survives round-trip",         reparsed.records.some(r => r.type === "Chlr" && r.name === "Test ChW Loop Chlr"));
   const rpHwCoil = reparsed.records.find(r => r.type === "CoilHtg" && r.attrs.Type === "HotWater");
-  ok("CoilHtg FluidSegInRef survives round-trip", rpHwCoil && rpHwCoil.attrs.FluidSegInRef === "Test HW Loop PrimSupSeg");
+  ok("CoilHtg FluidSegInRef survives round-trip", rpHwCoil && rpHwCoil.attrs.FluidSegInRef === origHwSup);
   const rpChWCoil = reparsed.records.find(r => r.type === "CoilClg" && r.attrs.Type === "ChilledWater");
-  ok("CoilClg FluidSegInRef survives round-trip", rpChWCoil && rpChWCoil.attrs.FluidSegInRef === "Test ChW Loop PrimSupSeg");
+  ok("CoilClg FluidSegInRef survives round-trip", rpChWCoil && rpChWCoil.attrs.FluidSegInRef === origChWSup);
 
   // -----------------------------------------------------------------------
-  // 8. deleteFluidLoop — removes records and un-wires coils
+  // 8. deleteFluidLoop — removes records, and only un-wires its own demands
   // -----------------------------------------------------------------------
   deleteFluidLoop(appDoc, hwLoop);
   ok("HW FluidSys removed",  !appDoc.records.find(r => r.type === "FluidSys" && r.name === "Test HW Loop"));
   ok("HW Blr removed",       !appDoc.records.find(r => r.type === "Blr" && r.name === "Test HW Loop Blr"));
   ok("HW FluidSeg removed",  !appDoc.records.find(r => r.type === "FluidSeg" && r.name === "Test HW Loop PrimSupSeg"));
+  // deleteFluidLoop clears refs pointing at the deleted loop's own segments. These
+  // coils were never on it (section 3), so their wiring must be untouched.
   const afterDeleteCoils = appDoc.records.filter(r => r.type === "CoilHtg" && r.attrs.Type === "HotWater");
-  ok("CoilHtg FluidSegInRef cleared after delete", afterDeleteCoils.every(c => !c.attrs.FluidSegInRef));
+  ok("deleting an unrelated HW loop leaves coil wiring intact",
+     afterDeleteCoils.every(c => c.attrs.FluidSegInRef === origHwSup));
 
   deleteFluidLoop(appDoc, chWLoop);
   ok("ChW FluidSys removed", !appDoc.records.find(r => r.type === "FluidSys" && r.name === "Test ChW Loop"));
   const afterDeleteChWCoils = appDoc.records.filter(r => r.type === "CoilClg" && r.attrs.Type === "ChilledWater");
-  ok("CoilClg FluidSegInRef cleared after delete", afterDeleteChWCoils.every(c => !c.attrs.FluidSegInRef));
+  ok("deleting an unrelated ChW loop leaves coil wiring intact",
+     afterDeleteChWCoils.every(c => c.attrs.FluidSegInRef === origChWSup));
 
   // -----------------------------------------------------------------------
-  // 9. Regression: existing AirSys/TrmlUnit structure not corrupted
+  // 9. First-of-type auto-wire, and un-wiring on delete
+  // -----------------------------------------------------------------------
+  // Section 3 covers the guard; this covers the path it guards. Removing the file's
+  // own HotWater loop leaves zero loops of that type, so the next one created is
+  // first-of-type and should pick up every HotWater coil.
+  const baseHw = appDoc.records.find(r => r.type === "FluidSys" && r.attrs.Type === "HotWater");
+  ok("file's own HW loop still present before this section", !!baseHw);
+  deleteFluidLoop(appDoc, baseHw);
+  const orphaned = appDoc.records.filter(r => r.type === "CoilHtg" && r.attrs.Type === "HotWater");
+  ok("deleting the loop a coil IS on clears its refs",
+     orphaned.every(c => !c.attrs.FluidSegInRef && !c.attrs.FluidSegOutRef));
+  ok("no HotWater loop remains",
+     !appDoc.records.some(r => r.type === "FluidSys" && r.attrs.Type === "HotWater"));
+
+  const freshHw = createFluidLoop(appDoc, "HotWater", "Fresh HW Loop");
+  const rewired = appDoc.records.filter(r => r.type === "CoilHtg" && r.attrs.Type === "HotWater");
+  ok("first-of-type HW loop wires coil supply refs",
+     rewired.length > 0 && rewired.every(c => c.attrs.FluidSegInRef === "Fresh HW Loop PrimSupSeg"));
+  ok("first-of-type HW loop wires coil return refs",
+     rewired.every(c => c.attrs.FluidSegOutRef === "Fresh HW Loop PrimRetSeg"));
+
+  // wireCoilsToLoop is exercised transitively above; call it directly to pin the
+  // contract it's imported for.
+  wireCoilsToLoop(appDoc, "HotWater", "Manual SupSeg", "Manual RetSeg");
+  ok("wireCoilsToLoop retargets every matching coil",
+     rewired.every(c => c.attrs.FluidSegInRef === "Manual SupSeg" &&
+                        c.attrs.FluidSegOutRef === "Manual RetSeg"));
+  // It keys off coil Type, so ChilledWater coils must be left alone.
+  ok("wireCoilsToLoop ignores coils of another loop type",
+     appDoc.records.filter(r => r.type === "CoilClg" && r.attrs.Type === "ChilledWater")
+       .every(c => c.attrs.FluidSegInRef === origChWSup));
+  deleteFluidLoop(appDoc, freshHw);
+
+  // -----------------------------------------------------------------------
+  // 10. Regression: existing AirSys/TrmlUnit structure not corrupted
   // -----------------------------------------------------------------------
   const airSysList = appDoc.records.filter(r => r.type === "AirSys");
   ok("AirSys records still present", airSysList.length > 0);
