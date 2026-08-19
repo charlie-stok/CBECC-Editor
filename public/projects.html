@@ -458,6 +458,7 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
     <ul>
       <li>The code year the file targets is now a badge in the top bar rather than a suffix on the filename, so it&rsquo;s legible at a glance in every mode. It is read from the file&rsquo;s <code>RulesetFilename</code> header and is not editable &mdash; the code year is a property of the model, and retargeting a file to another cycle is CBECC&rsquo;s own conversion job</li>
       <li>The badge turns amber and says why in the two cases that used to pass silently: a header with no recognisable year (the tool falls back to T24-2025 and now admits it), and a year with no Appendix 5.4A/5.4C tables in this build, where occupancy defaults are deliberately left blank</li>
+      <li>Top bar tidied: the title drops the code year (&ldquo;CBECC .cibd EDITOR&rdquo;) now that the badge carries it and the tool reads 2022, 2025 and 2028 files, and the redundant &ldquo;Open .cibd25 file&rdquo; button is gone &mdash; opening a file is Step 1&rsquo;s job, and Step 1 now drives the file picker directly</li>
     </ul>
   </div>
   <div class="vp-entry">
