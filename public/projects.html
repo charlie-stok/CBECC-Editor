@@ -450,9 +450,19 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
 .vp-entry ul { margin: 5px 0 0; padding-left: 16px; color: var(--ink-muted, #6E737B); line-height: 1.65; }
 </style>
 
-<div id="ver-badge">v1.16.0</div>
+<div id="ver-badge">v1.17.0</div>
 <div id="ver-panel">
   <div class="vp-title">Changelog</div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.17.0</span><span class="vp-date">2026-08-19</span>
+    <ul>
+      <li><strong>Fixed data loss:</strong> a system whose Type the tool didn&rsquo;t recognise had no matching entry in the edit form&rsquo;s Type list, so the select fell to its first option &mdash; opening the form to rename a system and saving would silently retype it and rebuild its subcomponents. Unrecognised Types are now preserved exactly, flagged in the list, and pre-selected in the edit form</li>
+      <li><strong>Fixed silent wrong-cycle defaults:</strong> T24-2019 files were served the 2025 occupancy list and 2025 Appendix 5.4A numbers while being labelled T24-2019, and the T24-2028 notice claimed auto-fill was disabled when it wasn&rsquo;t. Numeric defaults are now never borrowed from another code cycle &mdash; no table for the file&rsquo;s year means nothing is written</li>
+      <li>The partial-support notice is now driven by whether tables exist rather than a hardcoded 2028 check, so T24-2019 gets it too, and it names the file&rsquo;s own year and says which cycle&rsquo;s vocabulary is on screen when one is borrowed</li>
+      <li>System types are gated on the file&rsquo;s code year: a 2022 file no longer offers EvaporativeCooler, which is 2025-only. Availability is derived per year, so withdrawals are handled as naturally as additions; a type valid in another cycle is flagged, not rewritten</li>
+      <li>New <code>tools/extract_ruleset_enums.js</code> derives the per-year tables from CBECC&rsquo;s own Input Data Model dumps and re-checks them, so the tables can&rsquo;t drift silently when a ruleset updates</li>
+    </ul>
+  </div>
   <div class="vp-entry">
     <span class="vp-ver">v1.16.0</span><span class="vp-date">2026-08-19</span>
     <ul>

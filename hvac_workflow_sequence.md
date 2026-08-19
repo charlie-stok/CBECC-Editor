@@ -226,3 +226,44 @@ For each loop type actually needed (`ChilledWater`, `HotWater`, and
    them, so the tool writes nothing until sizing is switched on for a zone. Still
    untraced: the DOAS system's own control fields (`ClgCtrl` and its reset setpoints
    are available to DOASCV/DOASVAV, minus `WarmestReset`) and `OACtrl` sizing.
+
+## Code-year handling
+
+*Added 2026-08-19 (v1.17.0).* Two separate questions, deliberately kept apart:
+
+- **"May I offer this for a new system?"** — year-scoped. `RULESET_SYSTEM_TYPES` holds
+  the allowed `AirSys`/`ZnSys` `Type` sets per code year, generated from CBECC's own
+  Input Data Model dumps by `tools/extract_ruleset_enums.js`. `SYSTEM_TYPES` stays a
+  single catalog of *how to build* each type, because the component shapes are
+  year-invariant: a diff of the 2022 and 2025 models found 36 of 39 watched enum sets
+  byte-identical. Deriving availability per year rather than tagging entries with a
+  `sinceYear` handles withdrawals as naturally as additions — and withdrawals do
+  happen (`AirSys:ClgCtrl` lost `WarmestResetFlowFirst`,
+  `WarmestResetTemperatureFirst` and `OutsideAirResetDualSetpoint` between 2022 and
+  2025). A year with no table permits everything, so an unmodelled cycle degrades to
+  "offer everything, warn" rather than "offer nothing".
+- **"Must I preserve what's already in the file?"** — always yes, regardless of year.
+  An unrecognised or out-of-cycle `Type` is rendered as-is, flagged, and pre-selected
+  in the edit form so that saving an unrelated change cannot rewrite it.
+  `buildSystemComponents` returns before removing anything when it doesn't recognise
+  the `Type`, since it could not rebuild what it stripped.
+
+Known year-to-year deltas as of the 2022↔2025 comparison:
+
+| Enum | Delta | Handled |
+|---|---|---|
+| `ZnSys:Type` | `EvaporativeCooler` added in 2025 | Yes — gated |
+| `ZnSys:SubType` | `Standard IEC` / `Advanced IEC` added in 2025 | Transitively — only reachable via `EvaporativeCooler` |
+| `AirSys:ClgCtrl` | three options removed in 2025 | N/A — not exposed by this tool |
+
+Numeric thresholds were checked too and are **not** year-sensitive: the
+`SizeForDOASTemp` warning band is 50–90 °F in both cycles, and the 800 kW CRAC/CRAH
+split is identical in the 2022 baseline rules.
+
+On the occupancy side, enum **lists** fall back to another cycle when the file's year
+isn't modelled (with the UI saying so), but numeric **defaults** never do — a wrong
+cycle's Appendix 5.4A number is silent and ends up in a report, whereas a borrowed
+enum list is visible and checkable. When lighting power densities land they belong on
+the defaults side of that line, since Table 140.6-C is keyed by the same occupancy
+names across cycles and a wrong-year lookup returns a plausible number rather than
+failing.

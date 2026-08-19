@@ -1654,11 +1654,24 @@ const RULESET_DATA = {
 };
 
 function getCodeYear(){ return (doc && doc.codeYear) || 2025; }
-function getSpcFuncList(){ const d = RULESET_DATA[getCodeYear()]; return d ? d.spcFuncs : CBECC_SPCFUNC_2025; }
+
+// The fallback year used when the file's code year has no tables of its own. Enum
+// LISTS fall back to it so the step still functions, and the UI says so; numeric
+// DEFAULTS never do, because a wrong-year number is silent and ends up in a report.
+const FALLBACK_CODE_YEAR = 2025;
+function hasRulesetData(){ return !!RULESET_DATA[getCodeYear()]; }
+// Which year's vocabulary is actually on screen -- equals getCodeYear() unless we fell back.
+function getSpcFuncListYear(){ return hasRulesetData() ? getCodeYear() : FALLBACK_CODE_YEAR; }
+function getSpcFuncList(){ const d = RULESET_DATA[getSpcFuncListYear()]; return d.spcFuncs; }
 function getSpcFuncSet(){ return new Set(getSpcFuncList()); }
-function getSpcFuncDefaults(){ const d = RULESET_DATA[getCodeYear()]; return (d && d.spcFuncDefaults) ? d.spcFuncDefaults : SPCFUNC_DEFAULTS_54A; }
-function getVentFuncDefaults(){ const d = RULESET_DATA[getCodeYear()]; return (d && d.ventFuncDefaults) ? d.ventFuncDefaults : VENTFUNC_DEFAULTS_54C; }
-function hasOccupancyDefaults(){ const d = RULESET_DATA[getCodeYear()]; return !!(d && d.spcFuncDefaults); }
+// Null, not another year's table, when this code year has no published defaults.
+// Every caller must handle null; auto-fill is skipped rather than filled with the
+// wrong cycle's numbers.
+function getSpcFuncDefaults(){ const d = RULESET_DATA[getCodeYear()]; return (d && d.spcFuncDefaults) || null; }
+function getVentFuncDefaults(){ const d = RULESET_DATA[getCodeYear()]; return (d && d.ventFuncDefaults) || null; }
+function hasOccupancyDefaults(){ return !!getSpcFuncDefaults(); }
+// Ventilation categories come from the 5.4C table, so the picker is empty without it.
+function getVentFuncOptions(){ const v = getVentFuncDefaults(); return v ? Object.keys(v) : []; }
 
 /* =======================================================================
    Shared searchable combobox -- used for SpcFunc, VentSpcFunc, and the
@@ -1799,7 +1812,11 @@ function applyLabMakeupAirRule(spc){
 }
 
 function applyOccupancyDefaults(spc, spcFunc){
-  const d = getSpcFuncDefaults()[spcFunc];
+  // No 5.4A table for this code year: fill nothing rather than borrowing another
+  // cycle's numbers. This is the guard the T24-2028 notice used to claim existed.
+  const table = getSpcFuncDefaults();
+  if(!table) return false;
+  const d = table[spcFunc];
   if(!d) return false; // e.g. "All others" -- no table row, leave fields alone
   // Space-RecepProcess.rule: Computer Room is a documented exception to the raw table
   // value -- the Standard defines "Computer Room" as >20 W/ft2, so the default is
@@ -1820,7 +1837,8 @@ function applyOccupancyDefaults(spc, spcFunc){
 }
 
 function isFixtureBased(ventSpcFunc){
-  const v = getVentFuncDefaults()[ventSpcFunc];
+  const t = getVentFuncDefaults();
+  const v = t && t[ventSpcFunc];
   return !!(v && v.codeExhContPerFixture > 0);
 }
 
@@ -1830,7 +1848,8 @@ function isFixtureBased(ventSpcFunc){
 // non-fixture-based categories.
 function recomputeExhPerSpc(spc){
   const ventSpcFunc = spc.attrs.VentSpcFunc;
-  const v = getVentFuncDefaults()[ventSpcFunc];
+  const t = getVentFuncDefaults();
+  const v = t && t[ventSpcFunc];
   if(!v || !(v.codeExhContPerFixture > 0)) return;
   const n = spc.attrs.ExhNumFixtures || 0;
   const rate = spc.attrs.IsIntrmtExh ? v.codeExhIntrmtPerFixture : v.codeExhContPerFixture;
@@ -1838,7 +1857,9 @@ function recomputeExhPerSpc(spc){
 }
 
 function applyVentilationDefaults(spc, ventSpcFunc, occDens){
-  const v = getVentFuncDefaults()[ventSpcFunc];
+  const t = getVentFuncDefaults();
+  if(!t) return false;   // no 5.4C table for this code year -- fill nothing
+  const v = t[ventSpcFunc];
   if(v){
     setPlainAttr(spc, "VentPerArea", v.codeVentPerArea);
     setPlainAttr(spc, "ExhPerArea", v.codeExhPerArea);
@@ -1903,8 +1924,11 @@ function spaceArea(spc){
 function renderSpcFuncForm(container){
   if(!doc){ container.innerHTML = '<div class="warn-line">Load a file first.</div>'; return; }
   const spaces = doc.records.filter(r => r.type === "Spc");
-  const ventOptions = Object.keys(getVentFuncDefaults());
-  const is2028Stub = doc.codeYear === 2028;
+  const ventOptions = getVentFuncOptions();
+  // Driven by whether tables actually exist, not by a hardcoded year -- T24-2019 has
+  // the same gap as 2028 and used to get no notice at all.
+  const noDefaults    = !hasOccupancyDefaults();
+  const borrowedEnums = !hasRulesetData();
 
   const wrap = document.createElement('div');
 
@@ -2007,14 +2031,23 @@ function renderSpcFuncForm(container){
   scrollHint1.className = "wf-scroll-hint";
   scrollHint1.textContent = "\u25BC scroll for more";
   tableScroll.appendChild(scrollHint1);
-  if(is2028Stub){
+  if(noDefaults || borrowedEnums){
     const notice = document.createElement('div');
     notice.className = "warn-line";
     notice.style.marginBottom = "10px";
-    notice.innerHTML = "<strong>T24-2028 partial support:</strong> occupancy type enums are available " +
-      "(sourced from T24N_2028 BEMEnums.txt), but Appendix 5.4A/5.4C default tables have not yet been " +
-      "published by CEC. Auto-fill of OccDens, RecptPwrDens, VentPerArea, and ExhPerArea is disabled " +
-      "for this file. You can still assign SpcFunc and VentSpcFunc values manually.";
+    const yr = getCodeYear();
+    let msg = "<strong>T24-" + yr + " partial support:</strong> ";
+    if(borrowedEnums){
+      msg += "this tool has no occupancy vocabulary for T24-" + yr + ", so the list below is " +
+        "T24-" + getSpcFuncListYear() + "&rsquo;s. Values valid in T24-" + getSpcFuncListYear() +
+        " may not exist in T24-" + yr + " &mdash; check each one against the ruleset before relying on it. ";
+    } else {
+      msg += "occupancy type enums are available, but the Appendix 5.4A/5.4C default tables " +
+        "for this cycle have not been published. ";
+    }
+    msg += "Auto-fill of OccDens, RecptPwrDens, VentPerArea, and ExhPerArea is disabled for this " +
+      "file &mdash; no values are written. You can still assign SpcFunc and VentSpcFunc manually.";
+    notice.innerHTML = msg;
     wrap.appendChild(notice);
   }
   wrap.appendChild(tableScroll);
@@ -2129,14 +2162,17 @@ function renderSpcFuncForm(container){
       if(current){
         const ventTd = document.createElement('td');
         const vCurrent = spc.attrs.VentSpcFunc;
-        const vIsKnown = vCurrent === undefined || !!getVentFuncDefaults()[vCurrent];
+        const _vt = getVentFuncDefaults();
+        const vIsKnown = vCurrent === undefined || !_vt || !!_vt[vCurrent];
         const ventCombo = createWfCombo(
           vCurrent, vCurrent && !vIsKnown, "— not set —",
           () => ventOptions,
           () => (vCurrent && !vIsKnown) ? vCurrent : null,
           (val) => {
             if(val) setPlainAttr(spc, "VentSpcFunc", val); else deletePlainAttr(spc, "VentSpcFunc");
-            if(val) applyVentilationDefaults(spc, val, getSpcFuncDefaults()[current] ? getSpcFuncDefaults()[current].occDens : 0);
+            const _st = getSpcFuncDefaults();
+            const _row = _st && _st[current];
+            if(val) applyVentilationDefaults(spc, val, _row ? _row.occDens : 0);
             applyLabMakeupAirRule(spc);
             dirtyRecords.add(spc);
             updateStatus();
@@ -3634,6 +3670,44 @@ const DOAS_SIZE_CTRLS   = ["Neutral", "NeutralDehumidifed", "Cold"];
 const DOAS_TEMP_WARN_LO = 50;   // ThrmlZn:SizeForDOASTempLow/Hi warning band, degF
 const DOAS_TEMP_WARN_HI = 90;
 
+// GENERATED by tools/extract_ruleset_enums.js -- do not edit by hand.
+// Source: CBECC "<year> - Input Data Model.txt", one per installed ruleset.
+// Regenerate after any CBECC ruleset update; test_code_year.js re-derives these from
+// the installed models when they are present and fails if they have drifted.
+//
+// This is availability, not shape. SYSTEM_TYPES below stays a single catalog of how
+// to BUILD each type, because the component shapes are year-invariant -- a diff of
+// the 2022 and 2025 data models found 36 of 39 watched enum sets byte-identical.
+// What does change is which types a cycle offers, in both directions: 2025 added
+// ZnSys EvaporativeCooler, and AirSys:ClgCtrl lost three options going the other way.
+// Deriving availability per year handles additions and withdrawals alike, with no
+// per-entry flag to go stale.
+const RULESET_SYSTEM_TYPES = {
+  2022: {
+    AirSys: ["SZAC","SZHP","SZDFHP","SPVAC","SPVHP","PVAV","VAV","SZVAVAC","SZVAVHP","SZVAVDFHP","HV","DOASCV","DOASVAV","Exhaust"],
+    ZnSys:  ["SZAC","SZHP","SZDFHP","SPVAC","SPVHP","FPFC","WSHP","PTAC","PTHP","VRF","MiniSplitAC","MiniSplitHP","Furnace","Radiant","Baseboard","PassiveBeam","Exhaust","VentilationOnly"],
+  },
+  2025: {
+    AirSys: ["SZAC","SZHP","SZDFHP","SPVAC","SPVHP","PVAV","VAV","SZVAVAC","SZVAVHP","SZVAVDFHP","HV","DOASCV","DOASVAV","Exhaust"],
+    ZnSys:  ["SZAC","SZHP","SZDFHP","SPVAC","SPVHP","FPFC","WSHP","PTAC","PTHP","VRF","MiniSplitAC","MiniSplitHP","Furnace","Radiant","Baseboard","PassiveBeam","EvaporativeCooler","Exhaust","VentilationOnly"],
+  },
+};
+
+// True when this code year is known to allow the Type. A year we have no table for
+// permits everything -- refusing to offer any system at all would be worse than
+// offering one the ruleset might reject, and the occupancy step already warns that
+// the file's cycle isn't modelled.
+function typeAllowedInYear(value, family, year){
+  const y = RULESET_SYSTEM_TYPES[year === undefined ? getCodeYear() : year];
+  if(!y) return true;
+  const list = y[family];
+  return !list || list.indexOf(value) !== -1;
+}
+// The catalog entries offerable for new systems under the loaded file's code year.
+function availableSystemTypes(){
+  return SYSTEM_TYPES.filter(t => typeAllowedInYear(t.value, t.family));
+}
+
 const SYSTEM_TYPES = [
   {value: "VRF", family: "ZnSys", label: "VRF indoor unit", singleZone: true, supported: true},
   {value: "SZAC", family: "AirSys", subTypes: AIRSYS_SUBTYPES, subTypeDefault: AIRSYS_SUBTYPE_DEFAULT, label: "Packaged DX (SZAC)", singleZone: true, supported: true},
@@ -3923,9 +3997,15 @@ const PACKAGED_SZ_SPECS = {
 // subcomponents for a system, per its Type. Only VRF and packaged single-zone
 // DX are implemented in this pass.
 function buildSystemComponents(doc, sys){
+  const meta = sysMeta(sys);
+  // A Type this build has never heard of -- withdrawn by a later ruleset, from a code
+  // year we don't model, or hand-authored -- has no known component shape. Return
+  // before removing anything: stripping children we cannot rebuild would silently
+  // destroy the system. Known-but-unsupported types keep the old behaviour of being
+  // cleared and left bare.
+  if(!meta) return;
   removeSystemComponents(doc, sys);
-  const meta = systemTypeMeta(sys.attrs.Type);
-  if(!meta || !meta.supported) return;
+  if(!meta.supported) return;
 
   if(sys.attrs.Type === "VRF"){
     const cc = makeRecord("CoilClg", sys.name + "-CC");
@@ -4703,7 +4783,7 @@ function renderHVACSystemsForm(container){
   `;
   const typeSelect = createBox.querySelector('#sysTypeSelect');
   const clgCoilSelect = createBox.querySelector('#sysClgCoilSelect');
-  typeSelect.innerHTML = SYSTEM_TYPES.map(t =>
+  typeSelect.innerHTML = availableSystemTypes().map(t =>
     `<option value="${t.value}|${t.family}">${t.label}${t.supported ? "" : "  (manual setup only \u2014 not yet automated)"}</option>`
   ).join("");
   // Option values are "<Type>|<family>"; family disambiguates AirSys vs ZnSys "Exhaust".
@@ -4818,6 +4898,8 @@ function renderHVACSystemsForm(container){
         servedNames = doc.records.filter(r => r.type === "ThrmlZn" && r.attrs.PriAirCondgSysRef && r.attrs.PriAirCondgSysRef.__indexed && r.attrs.PriAirCondgSysRef.values[1] === sys.name).map(z => z.name);
       }
       const overCap = !isExhaust && !isDOAS && meta && meta.singleZone && servedNames.length > 1;
+      const unknownType = !meta;
+      const outOfCycle  = !!meta && !typeAllowedInYear(meta.value, meta.family);
       const needsCRAC = hasSubType(meta) && (meta.subTypes || []).indexOf('CRAC') !== -1 &&
         sys.attrs.SubType !== 'CRAC' &&
         sys.attrs.SubType !== 'CRAH' && systemServesComputerRoom(doc, sys);
@@ -4826,9 +4908,21 @@ function renderHVACSystemsForm(container){
       const safeName = sys.name.replace(/[^a-z0-9]/gi, '_');
 
       if(editingSysName === sys.name){
-        const typeOpts = SYSTEM_TYPES.map(t =>
-          `<option value="${t.value}|${t.family}"${t.value === sys.attrs.Type && t.family === sys.type ? ' selected' : ''}>${t.label}</option>`
-        ).join('');
+        // Offer what this code year allows, plus -- always -- whatever the record
+        // already is. A Type that is unrecognised or withdrawn must still round-trip:
+        // without an option matching it the select would fall to its first entry, and
+        // saving an unrelated edit (a rename) would silently retype the system and
+        // rebuild its subcomponents.
+        const knownHere = availableSystemTypes()
+          .some(t => t.value === sys.attrs.Type && t.family === sys.type);
+        const curLabel = meta
+          ? meta.label + ' \u2014 not in T24-' + getCodeYear()
+          : sys.attrs.Type + ' \u2014 unrecognised type, kept as-is';
+        const typeOpts =
+          (knownHere ? '' : `<option value="${sys.attrs.Type}|${sys.type}" selected>${curLabel}</option>`) +
+          availableSystemTypes().map(t =>
+            `<option value="${t.value}|${t.family}"${knownHere && t.value === sys.attrs.Type && t.family === sys.type ? ' selected' : ''}>${t.label}</option>`
+          ).join('');
         const isVav = !!(meta && meta.isVav);
         const _existingClg = getSysCoils(doc, sys).clg;
         const curClg = sys._clgCoilType || (_existingClg && _existingClg.attrs.Type) || (sys.attrs.Type === 'PVAV' ? 'DirectExpansion' : 'ChilledWater');
@@ -4887,6 +4981,8 @@ function renderHVACSystemsForm(container){
             ${zoneBadge}
             ${overCap ? '<span style="color:var(--edited);font-size:10px;margin-left:4px;">&#9888; single-zone type, multiple zones</span>' : ""}
             ${needsCRAC ? '<span title="The baseline ruleset models Computer Room zones as CRAC (building computer-room power below 800 kW) or CRAH (800 kW and above). Set SubType to match the design." style="color:var(--edited);font-size:10px;margin-left:4px;">&#9888; serves a Computer Room &mdash; set SubType CRAC/CRAH</span>' : ""}
+            ${unknownType ? '<span title="This Type is not in the tool\'s catalog. It is preserved exactly as-is; editing this system will not rewrite it." style="color:var(--edited);font-size:10px;margin-left:4px;">&#9888; unrecognised type &mdash; preserved</span>' : ""}
+            ${outOfCycle ? `<span title="Valid in another code cycle but not in T24-${getCodeYear()}, which is what this file targets. Preserved as-is." style="color:var(--edited);font-size:10px;margin-left:4px;">&#9888; not in T24-${getCodeYear()}</span>` : ""}
             ${sys.attrs.SubType ? `<span style="color:var(--text-dim);font-size:10px;">${sys.attrs.SubType}</span>` : ""}
             ${isExhaust && sys.attrs.ExhSysType ? `<span style="color:var(--text-dim);font-size:10px;">${sys.attrs.ExhSysType}</span>` : ""}
           </span>
@@ -7360,9 +7456,19 @@ renderStepDetail(WORKFLOW_STEPS[0]);
 .vp-entry ul { margin: 5px 0 0; padding-left: 16px; color: var(--ink-muted, #6E737B); line-height: 1.65; }
 </style>
 
-<div id="ver-badge">v1.16.0</div>
+<div id="ver-badge">v1.17.0</div>
 <div id="ver-panel">
   <div class="vp-title">Changelog</div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.17.0</span><span class="vp-date">2026-08-19</span>
+    <ul>
+      <li><strong>Fixed data loss:</strong> a system whose Type the tool didn&rsquo;t recognise had no matching entry in the edit form&rsquo;s Type list, so the select fell to its first option &mdash; opening the form to rename a system and saving would silently retype it and rebuild its subcomponents. Unrecognised Types are now preserved exactly, flagged in the list, and pre-selected in the edit form</li>
+      <li><strong>Fixed silent wrong-cycle defaults:</strong> T24-2019 files were served the 2025 occupancy list and 2025 Appendix 5.4A numbers while being labelled T24-2019, and the T24-2028 notice claimed auto-fill was disabled when it wasn&rsquo;t. Numeric defaults are now never borrowed from another code cycle &mdash; no table for the file&rsquo;s year means nothing is written</li>
+      <li>The partial-support notice is now driven by whether tables exist rather than a hardcoded 2028 check, so T24-2019 gets it too, and it names the file&rsquo;s own year and says which cycle&rsquo;s vocabulary is on screen when one is borrowed</li>
+      <li>System types are gated on the file&rsquo;s code year: a 2022 file no longer offers EvaporativeCooler, which is 2025-only. Availability is derived per year, so withdrawals are handled as naturally as additions; a type valid in another cycle is flagged, not rewritten</li>
+      <li>New <code>tools/extract_ruleset_enums.js</code> derives the per-year tables from CBECC&rsquo;s own Input Data Model dumps and re-checks them, so the tables can&rsquo;t drift silently when a ruleset updates</li>
+    </ul>
+  </div>
   <div class="vp-entry">
     <span class="vp-ver">v1.16.0</span><span class="vp-date">2026-08-19</span>
     <ul>
