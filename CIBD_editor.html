@@ -4879,9 +4879,12 @@ function createFluidLoop(doc, loopType, loopName, options){
     const mkpSeg = makeRecord("FluidSeg", mkpSegName);
     setPlainAttr(mkpSeg, "Type", "MakeupFluid");
     const wh = makeRecord("WtrHtr", loopName + " WtrHtr");
-    setPlainAttr(wh, "Type",             options.wtrHtrType || "Conventional");
+    const whType = options.wtrHtrType || "Conventional";
+    setPlainAttr(wh, "Type",             whType);
     setPlainAttr(wh, "FuelSrc",          options.fuelSrc    || "Gas");
     setPlainAttr(wh, "FluidSegOutRef",    supSegName);
+    if(whType === "HeatPumpPackaged" || whType === "HeatPumpSplit")
+      setPlainAttr(wh, "FluidSegInRef",   retSegName);
     setPlainAttr(wh, "FluidSegMakeupRef", mkpSegName);
     children.push(mkpSeg, wh);
   }
@@ -5705,9 +5708,12 @@ function addEquipToLoop(doc, loop, equipType, opts){
     if(priRet) setPlainAttr(rec, "FluidSegInRef",  priRet.name);
   } else if(equipType === "WtrHtr"){
     rec = makeRecord("WtrHtr", loop.name + " WtrHtr" + suffix);
-    setPlainAttr(rec, "Type",    opts.wtrHtrType || "Conventional");
+    const whType = opts.wtrHtrType || "Conventional";
+    setPlainAttr(rec, "Type",    whType);
     setPlainAttr(rec, "FuelSrc", opts.fuelSrc    || "Gas");
     if(priSup) setPlainAttr(rec, "FluidSegOutRef",    priSup.name);
+    if(priRet && (whType === "HeatPumpPackaged" || whType === "HeatPumpSplit"))
+      setPlainAttr(rec, "FluidSegInRef", priRet.name);
     const mkp = ch.find(r => r.type === "FluidSeg" && r.attrs.Type === "MakeupFluid");
     if(mkp) setPlainAttr(rec, "FluidSegMakeupRef", mkp.name);
   }
@@ -6236,13 +6242,19 @@ function renderCreateWaterSideForm(container){
         <select id="eq-wh-fuel" style="${fs}"${isElecOnly?" hidden":""}><option value="Gas" ${!eq.attrs.FuelSrc||eq.attrs.FuelSrc==="Gas"?"selected":""}>Gas</option><option value="Electricity" ${eq.attrs.FuelSrc==="Electricity"?"selected":""}>Electricity</option></select>
         <span style="font-size:11px;color:var(--text-dim);">Storage (gal)</span>
         <input id="eq-wh-stor" type="number" min="0" step="1" style="${fs}" placeholder="optional" value="${eq.attrs.StorCap||""}">
-        <span style="font-size:11px;color:var(--text-dim);">Setpoint (°F)</span>
-        <input id="eq-wh-setp" type="number" min="80" max="180" step="1" style="${fs}" placeholder="optional" value="${eq.attrs.WtrHtrSetPtTemp||""}">
       </div>`;
-      c.querySelector('#eq-wh-type').addEventListener('change',function(){setPlainAttr(eq,"Type",this.value);dirtyRecords.add(eq);updateStatus();const elec=this.value==="HeatPumpPackaged"||this.value==="HeatPumpSplit";c.querySelector('#wh-fuel-lbl').hidden=elec;c.querySelector('#eq-wh-fuel').hidden=elec;if(elec){setPlainAttr(eq,"FuelSrc","Electricity");dirtyRecords.add(eq);}renderAll();openModal(b=>buildEquipModal(b,eq));});
+      c.querySelector('#eq-wh-type').addEventListener('change',function(){
+        const v=this.value; setPlainAttr(eq,"Type",v); dirtyRecords.add(eq); updateStatus();
+        const elec=v==="HeatPumpPackaged"||v==="HeatPumpSplit";
+        c.querySelector('#wh-fuel-lbl').hidden=elec; c.querySelector('#eq-wh-fuel').hidden=elec;
+        if(elec){ setPlainAttr(eq,"FuelSrc","Electricity"); dirtyRecords.add(eq);
+          const loop=doc.records.find(r=>r.type==="FluidSys"&&getLoopChildren(doc,r).includes(eq));
+          if(loop){ const ret=getLoopChildren(doc,loop).find(r=>r.type==="FluidSeg"&&r.attrs.Type==="PrimaryReturn"); if(ret) setPlainAttr(eq,"FluidSegInRef",ret.name); }
+        } else { deletePlainAttr(eq,"FluidSegInRef"); }
+        renderAll(); openModal(b=>buildEquipModal(b,eq));
+      });
       c.querySelector('#eq-wh-fuel').addEventListener('change',function(){setPlainAttr(eq,"FuelSrc",this.value);dirtyRecords.add(eq);updateStatus();});
       c.querySelector('#eq-wh-stor').addEventListener('change',function(){if(this.value)setPlainAttr(eq,"StorCap",parseFloat(this.value));else deletePlainAttr(eq,"StorCap");dirtyRecords.add(eq);updateStatus();});
-      c.querySelector('#eq-wh-setp').addEventListener('change',function(){if(this.value)setPlainAttr(eq,"WtrHtrSetPtTemp",parseFloat(this.value));else deletePlainAttr(eq,"WtrHtrSetPtTemp");dirtyRecords.add(eq);updateStatus();});
     }
     // ── Companion pump section (Chlr, Blr, HtRej, HtPump — not WtrHtr) ──
     if(eq.type !== "WtrHtr"){
@@ -9671,13 +9683,22 @@ renderStepDetail(WORKFLOW_STEPS[0]);
 .vp-entry ul { margin: 5px 0 0; padding-left: 16px; color: var(--ink-muted, #6E737B); line-height: 1.65; }
 </style>
 
-<div id="ver-badge">v1.20.1</div>
+<div id="ver-badge">v1.20.2</div>
 <div id="ver-panel">
   <div class="vp-title">Changelog</div>
   <div class="vp-entry">
+    <span class="vp-ver">v1.20.2</span><span class="vp-date">2026-08-20</span>
+    <ul>
+      <li>QA fix: <code>WtrHtr:FluidSegInRef</code> is now written <em>only</em> for heat-pump water heaters (<code>HeatPumpPackaged</code> / <code>HeatPumpSplit</code>), not for conventional WHs &mdash; corpus-confirmed via a user-supplied HPWH file</li>
+      <li>Switching WtrHtr type to HPWH now auto-wires <code>FluidSegInRef</code> to the loop&rsquo;s PrimaryReturn; switching back clears it</li>
+      <li>QA fix: <code>WtrHtr:WtrHtrSetPtTemp</code> removed from equipment form &mdash; setpoint is configured on the FluidSys, not the WtrHtr record</li>
+      <li>QA confirmed: <code>AirSeg:Path = &ldquo;Ducted&rdquo;</code> is valid for VAV/PVAV supply and return segments; <code>HtPump:HtgFluidSegInRef</code> / <code>HtgFluidSegOutRef</code> confirmed valid for HHW heat pump plant</li>
+    </ul>
+  </div>
+  <div class="vp-entry">
     <span class="vp-ver">v1.20.1</span><span class="vp-date">2026-08-20</span>
     <ul>
-      <li>QA fix: <code>WtrHtr</code> no longer writes <code>FluidSegInRef</code> (not used by CBECC-Com &mdash; only <code>FluidSegOutRef</code> and <code>FluidSegMakeupRef</code> are written)</li>
+      <li>QA fix: <code>WtrHtr:FluidSegInRef</code> removed for conventional WHs (not used by CBECC-Com)</li>
       <li>QA fix: <code>WtrHtr:FuelSrc</code> now writes <code>&ldquo;Electricity&rdquo;</code> (full word) for heat-pump water heaters, matching corpus</li>
       <li>QA fix: <code>HtRej:FanType</code> removed &mdash; not a valid attribute per corpus; editor no longer sets or displays it</li>
     </ul>
