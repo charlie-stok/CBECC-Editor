@@ -38,7 +38,7 @@ const CORPUS = "C:/Users/CharlieChristenson/OneDrive - Stok LLC/Documents/CBECC 
 const F_LTG  = CORPUS + "/OtherTests/010112-SchSml-PSZ.cibd25";       // 4 IntLtgSys, 3 Lum
 const F_SKY  = CORPUS + "/OtherTests/050112-RetlMed-SZVAV.cibd25";    // 32 Skylt
 const F_PV   = CORPUS + "/StandardModelTests/010012-SchSml-CECStd.cibd25"; // PVArray + Batt
-const F_GEOM = "BPP_2025_initial.cibd25";                             // walls + windows
+const F_GEOM = "Test.cibd25";                                         // walls + windows
 
 let pass = 0, fail = 0;
 function ok(label, cond, detail){

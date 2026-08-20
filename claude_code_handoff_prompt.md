@@ -185,7 +185,7 @@ Every feature in this build was verified with the same method, not just written 
    them separately. That fragment-slicing approach was tried early in this project and produced
    misleading results (stale closures, missing function scopes); `run_full.js` replaced it and
    should be the template for any new test script. See it for the exact stub setup.
-3. Tests load real files from the local CBECC corpus (`BPP_2025_*.cibd25`, or reach into
+3. Tests load real files from the local CBECC corpus (`Test.cibd25` in the repo root, or reach into
    `CBECC/Projects/2025/...` for type-specific structural examples) — never synthetic fixtures
    unless a specific edge case genuinely has no real example (state that explicitly if so).
 4. For anything serialization-related, always test the full round trip: build the change in
