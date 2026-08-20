@@ -146,13 +146,33 @@ async function run(){
      subTypesFor(systemTypeMeta('SZAC', 'ZnSys')).indexOf('CRAC') === -1 &&
      subTypesFor(systemTypeMeta('SZAC', 'ZnSys')).indexOf('Split1Phase') !== -1);
   ok("ZnSys SZAC defaults to Split1Phase, matching all 35 corpus records",
-     systemTypeMeta('SZAC', 'ZnSys').subTypeDefault === 'Split1Phase');
+     win.subTypeDefaultFor(systemTypeMeta('SZAC', 'ZnSys')) === 'Split1Phase');
   ok("Furnace/Radiant/Evap carry their own SubType vocabularies",
      subTypesFor(systemTypeMeta('Furnace')).indexOf('Wall') !== -1 &&
      subTypesFor(systemTypeMeta('Radiant')).indexOf('Embedded') !== -1 &&
      subTypesFor(systemTypeMeta('EvaporativeCooler')).indexOf('Standard IEC') !== -1);
-  ok("Baseboard and PassiveBeam support no SubType",
-     !hasSubType(systemTypeMeta('Baseboard')) && !hasSubType(systemTypeMeta('PassiveBeam')));
+
+  // These four were transcribed wrong when the SubType sets were written by hand, and
+  // are now generated from the ruleset. Asserted against what the ruleset actually says.
+  ok("PassiveBeam is NA-only, so no control is offered",
+     JSON.stringify(subTypesFor(systemTypeMeta('PassiveBeam'))) === '["NA"]' &&
+     !hasSubType(systemTypeMeta('PassiveBeam')));
+  ok("Baseboard falls to the ruleset's else-branch and DOES offer a choice",
+     hasSubType(systemTypeMeta('Baseboard')) &&
+     subTypesFor(systemTypeMeta('Baseboard')).length === 13 &&
+     win.subTypeDefaultFor(systemTypeMeta('Baseboard')) === 'NA');
+  ok("ZnSys SZDFHP falls to the same else-branch, not to its sibling SZHP's set",
+     JSON.stringify(subTypesFor(systemTypeMeta('SZDFHP', 'ZnSys'))) ===
+     JSON.stringify(subTypesFor(systemTypeMeta('Baseboard'))) &&
+     win.subTypeDefaultFor(systemTypeMeta('SZDFHP', 'ZnSys')) === 'NA');
+  ok("MiniSplitAC/HP offer Split3Phase and Split1Phase, which were missing entirely",
+     JSON.stringify(subTypesFor(systemTypeMeta('MiniSplitAC'))) === '["Split3Phase","Split1Phase"]' &&
+     JSON.stringify(subTypesFor(systemTypeMeta('MiniSplitHP'))) === '["Split3Phase","Split1Phase"]' &&
+     win.subTypeDefaultFor(systemTypeMeta('MiniSplitHP')) === 'Split1Phase');
+  // AirSys HV and Exhaust declare a default id their own block never lists.
+  ok("a ruleset default that isn't offered surfaces as null, not a guess",
+     win.subTypeDefaultFor(systemTypeMeta('HV', 'AirSys')) === null &&
+     JSON.stringify(subTypesFor(systemTypeMeta('HV', 'AirSys'))) === '["NA"]');
 
   // ---- 5. A narrowing Type change drops a now-invalid SubType -------------
   console.log("\n[5] SubType survives or is dropped on Type change");

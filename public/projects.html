@@ -450,9 +450,18 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
 .vp-entry ul { margin: 5px 0 0; padding-left: 16px; color: var(--ink-muted, #6E737B); line-height: 1.65; }
 </style>
 
-<div id="ver-badge">v1.18.0</div>
+<div id="ver-badge">v1.19.0</div>
 <div id="ver-panel">
   <div class="vp-title">Changelog</div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.19.0</span><span class="vp-date">2026-08-19</span>
+    <ul>
+      <li>SubType option sets are now <strong>generated</strong> from each code year&rsquo;s own ruleset instead of transcribed by hand. The transcription was wrong in four places: <code>ZnSys:SZDFHP</code> and <code>Baseboard</code> fall to the ruleset&rsquo;s else-branch (13 values, default NA) rather than to a sibling&rsquo;s set, and <code>MiniSplitAC</code>/<code>MiniSplitHP</code> have a real two-value set (Split3Phase / Split1Phase) that wasn&rsquo;t offered at all</li>
+      <li>The extractor now parses conditional branches instead of merging them, which recovers the fact that <code>AirSys:Type</code> narrows to five types when <code>AirSys:ServesResZn = 1</code>. Recorded in the tables; not yet applied, since ServesResZn is derived by CBECC rather than stored</li>
+      <li>Each year is read from <strong>its own install</strong>. The 2025 install also ships a &ldquo;2022&rdquo; enum file, but that is a backward-compatibility superset &mdash; it lists ZnSys EvaporativeCooler, which the real 2022 ruleset does not. Generating 2022 from it would have silently broken the year gating</li>
+      <li>Where the ruleset declares a default it doesn&rsquo;t actually offer &mdash; true of <code>AirSys</code> HV and Exhaust &mdash; that now surfaces as no default rather than a guess</li>
+    </ul>
+  </div>
   <div class="vp-entry">
     <span class="vp-ver">v1.18.0</span><span class="vp-date">2026-08-19</span>
     <ul>
