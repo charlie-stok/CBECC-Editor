@@ -4882,7 +4882,6 @@ function createFluidLoop(doc, loopType, loopName, options){
     setPlainAttr(wh, "Type",             options.wtrHtrType || "Conventional");
     setPlainAttr(wh, "FuelSrc",          options.fuelSrc    || "Gas");
     setPlainAttr(wh, "FluidSegOutRef",    supSegName);
-    setPlainAttr(wh, "FluidSegInRef",     retSegName);
     setPlainAttr(wh, "FluidSegMakeupRef", mkpSegName);
     children.push(mkpSeg, wh);
   }
@@ -5709,7 +5708,6 @@ function addEquipToLoop(doc, loop, equipType, opts){
     setPlainAttr(rec, "Type",    opts.wtrHtrType || "Conventional");
     setPlainAttr(rec, "FuelSrc", opts.fuelSrc    || "Gas");
     if(priSup) setPlainAttr(rec, "FluidSegOutRef",    priSup.name);
-    if(priRet) setPlainAttr(rec, "FluidSegInRef",     priRet.name);
     const mkp = ch.find(r => r.type === "FluidSeg" && r.attrs.Type === "MakeupFluid");
     if(mkp) setPlainAttr(rec, "FluidSegMakeupRef", mkp.name);
   }
@@ -6084,7 +6082,7 @@ function renderCreateWaterSideForm(container){
       card.appendChild(twoCol);
       // Footer
       const foot=document.createElement('div'); foot.style.cssText="border-top:1px solid var(--border);padding:5px 8px;display:flex;gap:6px;flex-wrap:wrap;background:var(--panel2);"; const bStyle="font-size:10.5px;padding:2px 8px;"; function addBtn(label,fn){ const b=document.createElement('button'); b.className="btn"; b.style.cssText=bStyle; b.textContent=label; b.addEventListener('click',fn); foot.appendChild(b); }
-      addBtn("+ Cooling Tower",()=>{ const e=addEquipToLoop(doc,loop,"HtRej",{htRejType:"OpenTower"}); if(e){setPlainAttr(e,"ModCtrl","VariableSpeedDrive");setPlainAttr(e,"FanType","Axial");dirtyRecords.add(e);} updateStatus(); renderAll(); if(e) openModal(box=>buildEquipModal(box,e)); });
+      addBtn("+ Cooling Tower",()=>{ const e=addEquipToLoop(doc,loop,"HtRej",{htRejType:"OpenTower"}); if(e){setPlainAttr(e,"ModCtrl","VariableSpeedDrive");dirtyRecords.add(e);} updateStatus(); renderAll(); if(e) openModal(box=>buildEquipModal(box,e)); });
       card.appendChild(foot);
       if(siblingsOfSameType.length>1) wireEquipDrop(rejPanel,loop);
     } else {
@@ -6226,25 +6224,22 @@ function renderCreateWaterSideForm(container){
         <select id="eq-type" style="${fs}"><option value="OpenTower" ${!eq.attrs.Type||eq.attrs.Type==="OpenTower"?"selected":""}>Open Tower</option><option value="ClosedTower" ${eq.attrs.Type==="ClosedTower"?"selected":""}>Closed Tower</option><option value="ClosedTowerEvaporative" ${eq.attrs.Type==="ClosedTowerEvaporative"?"selected":""}>Closed Tower Evaporative</option></select>
         <span style="font-size:11px;color:var(--text-dim);">Mod control</span>
         <select id="eq-modctrl" style="${fs}"><option value="VariableSpeedDrive" ${!eq.attrs.ModCtrl||eq.attrs.ModCtrl==="VariableSpeedDrive"?"selected":""}>Variable Speed Drive</option><option value="TwoSpeed" ${eq.attrs.ModCtrl==="TwoSpeed"?"selected":""}>Two Speed</option><option value="Cycling" ${eq.attrs.ModCtrl==="Cycling"?"selected":""}>Cycling</option><option value="Bypass" ${eq.attrs.ModCtrl==="Bypass"?"selected":""}>Bypass</option></select>
-        <span style="font-size:11px;color:var(--text-dim);">Fan type</span>
-        <select id="eq-fantype" style="${fs}"><option value="Axial" ${!eq.attrs.FanType||eq.attrs.FanType==="Axial"?"selected":""}>Axial</option><option value="Centrifugal" ${eq.attrs.FanType==="Centrifugal"?"selected":""}>Centrifugal</option></select>
       </div>`;
       c.querySelector('#eq-type').addEventListener('change',function(){setPlainAttr(eq,"Type",this.value);dirtyRecords.add(eq);updateStatus();renderAll();openModal(b=>buildEquipModal(b,eq));});
       c.querySelector('#eq-modctrl').addEventListener('change',function(){setPlainAttr(eq,"ModCtrl",this.value);dirtyRecords.add(eq);updateStatus();});
-      c.querySelector('#eq-fantype').addEventListener('change',function(){setPlainAttr(eq,"FanType",this.value);dirtyRecords.add(eq);updateStatus();});
     } else if(eq.type==="WtrHtr"){
       const isElecOnly=eq.attrs.Type==="HeatPumpPackaged"||eq.attrs.Type==="HeatPumpSplit";
       c.innerHTML=`<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center;max-width:320px;">
         <span style="font-size:11px;color:var(--text-dim);">Type</span>
         <select id="eq-wh-type" style="${fs}"><option value="Conventional" ${!eq.attrs.Type||eq.attrs.Type==="Conventional"?"selected":""}>Conventional</option><option value="HeatPumpPackaged" ${eq.attrs.Type==="HeatPumpPackaged"?"selected":""}>Heat Pump — Packaged</option><option value="HeatPumpSplit" ${eq.attrs.Type==="HeatPumpSplit"?"selected":""}>Heat Pump — Split</option></select>
         <span id="wh-fuel-lbl" style="font-size:11px;color:var(--text-dim);"${isElecOnly?" hidden":""}>Fuel</span>
-        <select id="eq-wh-fuel" style="${fs}"${isElecOnly?" hidden":""}><option value="Gas" ${!eq.attrs.FuelSrc||eq.attrs.FuelSrc==="Gas"?"selected":""}>Gas</option><option value="Electric" ${eq.attrs.FuelSrc==="Electric"?"selected":""}>Electric</option></select>
+        <select id="eq-wh-fuel" style="${fs}"${isElecOnly?" hidden":""}><option value="Gas" ${!eq.attrs.FuelSrc||eq.attrs.FuelSrc==="Gas"?"selected":""}>Gas</option><option value="Electricity" ${eq.attrs.FuelSrc==="Electricity"?"selected":""}>Electricity</option></select>
         <span style="font-size:11px;color:var(--text-dim);">Storage (gal)</span>
         <input id="eq-wh-stor" type="number" min="0" step="1" style="${fs}" placeholder="optional" value="${eq.attrs.StorCap||""}">
         <span style="font-size:11px;color:var(--text-dim);">Setpoint (°F)</span>
         <input id="eq-wh-setp" type="number" min="80" max="180" step="1" style="${fs}" placeholder="optional" value="${eq.attrs.WtrHtrSetPtTemp||""}">
       </div>`;
-      c.querySelector('#eq-wh-type').addEventListener('change',function(){setPlainAttr(eq,"Type",this.value);dirtyRecords.add(eq);updateStatus();const elec=this.value==="HeatPumpPackaged"||this.value==="HeatPumpSplit";c.querySelector('#wh-fuel-lbl').hidden=elec;c.querySelector('#eq-wh-fuel').hidden=elec;if(elec){setPlainAttr(eq,"FuelSrc","Electric");dirtyRecords.add(eq);}renderAll();openModal(b=>buildEquipModal(b,eq));});
+      c.querySelector('#eq-wh-type').addEventListener('change',function(){setPlainAttr(eq,"Type",this.value);dirtyRecords.add(eq);updateStatus();const elec=this.value==="HeatPumpPackaged"||this.value==="HeatPumpSplit";c.querySelector('#wh-fuel-lbl').hidden=elec;c.querySelector('#eq-wh-fuel').hidden=elec;if(elec){setPlainAttr(eq,"FuelSrc","Electricity");dirtyRecords.add(eq);}renderAll();openModal(b=>buildEquipModal(b,eq));});
       c.querySelector('#eq-wh-fuel').addEventListener('change',function(){setPlainAttr(eq,"FuelSrc",this.value);dirtyRecords.add(eq);updateStatus();});
       c.querySelector('#eq-wh-stor').addEventListener('change',function(){if(this.value)setPlainAttr(eq,"StorCap",parseFloat(this.value));else deletePlainAttr(eq,"StorCap");dirtyRecords.add(eq);updateStatus();});
       c.querySelector('#eq-wh-setp').addEventListener('change',function(){if(this.value)setPlainAttr(eq,"WtrHtrSetPtTemp",parseFloat(this.value));else deletePlainAttr(eq,"WtrHtrSetPtTemp");dirtyRecords.add(eq);updateStatus();});
@@ -9676,9 +9671,17 @@ renderStepDetail(WORKFLOW_STEPS[0]);
 .vp-entry ul { margin: 5px 0 0; padding-left: 16px; color: var(--ink-muted, #6E737B); line-height: 1.65; }
 </style>
 
-<div id="ver-badge">v1.20.0</div>
+<div id="ver-badge">v1.20.1</div>
 <div id="ver-panel">
   <div class="vp-title">Changelog</div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.20.1</span><span class="vp-date">2026-08-20</span>
+    <ul>
+      <li>QA fix: <code>WtrHtr</code> no longer writes <code>FluidSegInRef</code> (not used by CBECC-Com &mdash; only <code>FluidSegOutRef</code> and <code>FluidSegMakeupRef</code> are written)</li>
+      <li>QA fix: <code>WtrHtr:FuelSrc</code> now writes <code>&ldquo;Electricity&rdquo;</code> (full word) for heat-pump water heaters, matching corpus</li>
+      <li>QA fix: <code>HtRej:FanType</code> removed &mdash; not a valid attribute per corpus; editor no longer sets or displays it</li>
+    </ul>
+  </div>
   <div class="vp-entry">
     <span class="vp-ver">v1.20.0</span><span class="vp-date">2026-08-19</span>
     <ul>
