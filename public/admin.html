@@ -458,9 +458,19 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
 .vp-entry ul { margin: 5px 0 0; padding-left: 16px; color: var(--ink-muted, #6E737B); line-height: 1.65; }
 </style>
 
-<div id="ver-badge">v1.17.1</div>
+<div id="ver-badge">v1.18.0</div>
 <div id="ver-panel">
   <div class="vp-title">Changelog</div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.18.0</span><span class="vp-date">2026-08-19</span>
+    <ul>
+      <li>Added <code>ZnSys:SZDFHP</code> &mdash; the zone-level dual-fuel heat pump. Zone-level SZAC and SZHP went in last release; this was its sibling in the same enum, missed</li>
+      <li><strong>Corrected:</strong> zone-level heat pumps were built with no supplemental heating coil, on the assumption that zone units never have one. A real PTHP <code>ZnSys</code> in the corpus does, and so does the ruleset&rsquo;s own <code>PTHP-ResZnSys</code> baseline block. Zone-level SZHP now gets a Resistance backup and SZDFHP a Furnace one</li>
+      <li>The zone-level backup coil is placed <em>after</em> the Fan, which is where the real record has it &mdash; the one point where the zone-level child order departs from the air-system build, where it sits before the Fan</li>
+      <li>PTAC, PTHP, MiniSplitHP, WSHP and zone-level SPVHP still get no backup coil, matching the corpus majority for each</li>
+      <li>The air-system type list is now confirmed complete against CBECC&rsquo;s own dropdown &mdash; 14 types, exact match. Zone systems are complete but for <code>VentilationOnly</code>, which is deliberately excluded</li>
+    </ul>
+  </div>
   <div class="vp-entry">
     <span class="vp-ver">v1.17.1</span><span class="vp-date">2026-08-19</span>
     <ul>

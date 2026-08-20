@@ -104,7 +104,39 @@ This is the "unlock" logic — branches entirely on the Stage 1 Type choice.
   neither as a child.
 - Confirmed across all 35 `ZnSys:SZAC` records in the corpus, which are unanimous on
   the shape, on `SubType = "Split1Phase"` and on `FanCtrl = "Cycling"`.
-- No supplemental heating coil: no zone-level unit in the corpus has one.
+- **Heat-pump variants DO get a supplemental coil, placed after the `Fan`.**
+  *Corrected 2026-08-19 (v1.18.0) — v1.16.0 asserted that no zone-level unit has one,
+  which was wrong.* A real PTHP `ZnSys` in `010212-SchSml-PVAVAirZnSys.cibd25` (present
+  in both the 2022 and 2025 corpora) is ordered
+  `CoilClg → CoilHtg(HeatPump) → Fan → CoilHtg(Resistance)`, and the ruleset's own
+  `PTHP-ResZnSys` library block sets `HtPumpSuppCoilHtgRef` on its `CoilHtg`. Note the
+  **order differs from the `AirSys` build**, where the backup sits *before* the Fan.
+  Only one such `ZnSys` exists corpus-wide, so the ordering rests on a single example;
+  it is very likely cosmetic, since the link is by name through
+  `HtPumpSuppCoilHtgRef` rather than by position.
+  Applied to zone-level `SZHP` (Resistance) and `SZDFHP` (Furnace) only. `PTAC`,
+  `PTHP`, `MiniSplitHP`, `WSHP` and zone-level `SPVHP` get none, matching the corpus
+  majority for each — 3 of 4 real PTHP records have no backup coil.
+- The library also shows a second pattern: a *shared* `CoilHtg "SuppCoilHtg"` referenced
+  by name from several systems, rather than a per-system sibling. This tool nests one
+  per system, which is what the real project file does and what keeps rename and delete
+  cascades simple.
+
+### Catalog completeness vs CBECC's own UI
+
+Checked 2026-08-19 against CBECC 2025's Air System dialog: **`AirSys` is an exact
+match, 14 types.** `ZnSys` covers 18 of the 19 in the enum; the omission is
+`VentilationOnly`, excluded on purpose (see open item 4b). Nothing is offered that
+CBECC doesn't define.
+
+Two name traps worth recording, both easy to trip on:
+
+- **`PassiveBeam` is a `ZnSys` type, not an `AirSys` one** (`ZnSys:Type` = 22), so it
+  is absent from the Air System dropdown by design. Three corpus files use it, e.g.
+  `OffSml-PassiveBeams-DOASCV+HtRcvry.cibd25` — a chilled-water coil and no fan.
+- **`ActiveBeam` is something else entirely**: `TrmlUnit:Type` = 6, a terminal unit
+  rather than a system. The ruleset notes it is "described by user as TrmlUnit, but
+  modeled as an FPFC."
 
 **VAV / PVAV / HV (`AirSys`, multi-zone):**
 - Auto-create the supply/return `AirSeg` pair, nested `Fan`.

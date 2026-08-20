@@ -51,7 +51,7 @@ async function run(){
   // ---- 1. Every new Type is in the catalog, in the right family ------------
   console.log("\n[1] Catalog coverage");
   [['SZDFHP','AirSys'], ['SZVAVDFHP','AirSys'], ['SPVAC','AirSys'], ['SPVHP','AirSys'],
-   ['SZAC','ZnSys'], ['SZHP','ZnSys'], ['SPVAC','ZnSys'], ['SPVHP','ZnSys']].forEach(([t, f]) => {
+   ['SZAC','ZnSys'], ['SZHP','ZnSys'], ['SZDFHP','ZnSys'], ['SPVAC','ZnSys'], ['SPVHP','ZnSys']].forEach(([t, f]) => {
     const m = systemTypeMeta(t, f);
     ok(`${f}:${t} present in catalog`, !!m && m.family === f && m.value === t);
   });
@@ -108,11 +108,30 @@ async function run(){
   ok("ZnSys SZAC fan is constant volume",
      childrenOf(znSzac).find(k => k.type === 'Fan').attrs.CtrlMthd === 'ConstantVolume');
 
+  // Zone-level heat pumps DO carry a backup coil, and it goes after the Fan -- the one
+  // place the zone-level order departs from the AirSys build. Taken from the PTHP ZnSys
+  // in 010212-SchSml-PVAVAirZnSys.cibd25 and from the ruleset's own PTHP-ResZnSys
+  // library block, which sets HtPumpSuppCoilHtgRef on its CoilHtg.
+  const ZN_SHAPE_HP = 'CoilClg(DirectExpansion) -> CoilHtg(HeatPump) -> Fan -> CoilHtg(SUPP)';
   const znSzhp = build('SZHP', 'ZnSys', 'T Zn SZHP');
-  ok("ZnSys SZHP uses a HeatPump coil",
-     shapeOf(znSzhp) === ZN_SHAPE.replace('Furnace', 'HeatPump'));
-  ok("zone-level units get no supplemental coil",
-     childrenOf(znSzhp).filter(k => k.type === 'CoilHtg').length === 1);
+  ok("ZnSys SZHP gets a HeatPump coil and a Resistance backup after the Fan",
+     shapeOf(znSzhp) === ZN_SHAPE_HP.replace('SUPP', 'Resistance'));
+  ok("ZnSys SZHP links primary to backup",
+     childrenOf(znSzhp).find(k => k.attrs.Type === 'HeatPump').attrs.HtPumpSuppCoilHtgRef === 'T Zn SZHP SuppHtg');
+
+  const znSzdfhp = build('SZDFHP', 'ZnSys', 'T Zn SZDFHP');
+  ok("ZnSys SZDFHP swaps the backup to Furnace",
+     shapeOf(znSzdfhp) === ZN_SHAPE_HP.replace('SUPP', 'Furnace'));
+  ok("the zone-level backup sits after the Fan, unlike the AirSys build",
+     shapeOf(znSzdfhp).endsWith('Fan -> CoilHtg(Furnace)') &&
+     shapeOf(szdfhp).indexOf('CoilHtg(Furnace) -> Fan') !== -1);
+
+  // Cooling-only and PTHP-family zone units still get none.
+  ok("ZnSys SZAC has no backup coil",
+     childrenOf(znSzac).filter(k => k.type === 'CoilHtg').length === 1);
+  const znSpvhp = build('SPVHP', 'ZnSys', 'T Zn SPVHP');
+  ok("ZnSys SPVHP gets none -- it is simulated as PTHP, which mostly has none",
+     childrenOf(znSpvhp).filter(k => k.type === 'CoilHtg').length === 1);
 
   ok("the two SZAC families build different shapes", shapeOf(szac) !== shapeOf(znSzac));
 

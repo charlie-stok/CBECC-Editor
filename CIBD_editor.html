@@ -3777,6 +3777,12 @@ const SYSTEM_TYPES = [
   // reference corpus (35 records) and was missing from this catalog entirely.
   {value: "SZAC", family: "ZnSys", subTypes: SUBTYPES_PKG_SPLIT, subTypeDefault: "Split1Phase", label: "Packaged DX, zone-level (SZAC)", singleZone: true, supported: true},
   {value: "SZHP", family: "ZnSys", subTypes: SUBTYPES_PKG_SPLIT, subTypeDefault: "Split1Phase", label: "Packaged Heat Pump, zone-level (SZHP)", singleZone: true, supported: true},
+  // ZnSys:SubType gives SZDFHP no dedicated block, so the data model drops it into a
+  // catch-all `else` that unions every ZnSys vocabulary at once (Wall, Panel, IEC...)
+  // with a default of NA. That reads as an omission in CBECC's conditional table
+  // rather than an intent to offer "Panel" on a dual-fuel heat pump, so this follows
+  // its sibling SZHP instead. Revisit if a real ZnSys:SZDFHP file turns up.
+  {value: "SZDFHP", family: "ZnSys", subTypes: SUBTYPES_PKG_SPLIT, subTypeDefault: "Split1Phase", label: "Packaged Dual-Fuel HP, zone-level (SZDFHP)", singleZone: true, supported: true},
   {value: "SPVAC", family: "ZnSys", subTypes: SUBTYPES_SPV, subTypeDefault: "Packaged3Phase", label: "Single Package Vertical AC, zone-level (SPVAC)", singleZone: true, supported: true},
   {value: "SPVHP", family: "ZnSys", subTypes: SUBTYPES_SPV, subTypeDefault: "Packaged3Phase", label: "Single Package Vertical HP, zone-level (SPVHP)", singleZone: true, supported: true},
   {value: "PTAC", family: "ZnSys", label: "PTAC", singleZone: true, supported: true},
@@ -4034,10 +4040,17 @@ function createSystem(doc, typeValue, name, family){
 // SPVAC/SPVHP appear in no corpus file, so their shape follows the simulation mapping
 // in Analysis-Control.rule, which models them as SZAC/SZHP as an AirSys and PTAC/PTHP
 // as a ZnSys.
+// `znSupp` gates the backup coil for the ZONE-level build specifically, because the
+// two families disagree. SZHP/SZDFHP are packaged heat pumps with declared backup
+// heat, and the ruleset's own zone-level heat pump carries one: the PTHP-ResZnSys
+// library block sets HtPumpSuppCoilHtgRef on its CoilHtg. SPVHP as a ZnSys is
+// simulated as PTHP (Analysis-Control.rule), and 3 of the 4 real PTHP records in the
+// corpus have no backup coil, so it gets none here. SZVAV* never reach the ZnSys
+// branch -- they aren't in the ZnSys:Type enum at all.
 const PACKAGED_SZ_SPECS = {
   SZAC:      {htg: "Furnace"},
-  SZHP:      {htg: "HeatPump", supp: "Resistance"},
-  SZDFHP:    {htg: "HeatPump", supp: "Furnace"},
+  SZHP:      {htg: "HeatPump", supp: "Resistance", znSupp: true},
+  SZDFHP:    {htg: "HeatPump", supp: "Furnace",    znSupp: true},
   SZVAVAC:   {htg: "Furnace"},
   SZVAVHP:   {htg: "HeatPump", supp: "Resistance"},
   SZVAVDFHP: {htg: "HeatPump", supp: "Furnace"},
@@ -4097,10 +4110,18 @@ function buildSystemComponents(doc, sys){
     appendHvacChildren(doc, sys, kids);
   } else if(PACKAGED_SZ_SPECS[sys.attrs.Type] && sys.type === "ZnSys"){
     // Zone-level packaged unit. Shape confirmed across all 35 ZnSys:SZAC records in
-    // the corpus: CoilClg(DirectExpansion) -> CoilHtg(Furnace) -> Fan, with the
-    // parent carrying FanCtrl = "Cycling". No AirSeg or OACtrl -- ZnSys takes
-    // neither as a child in the data model. Zone-level units are not paired with a
-    // supplemental coil in any corpus example, so none is created here.
+    // the corpus: CoilClg(DirectExpansion) -> CoilHtg -> Fan, with the parent
+    // carrying FanCtrl = "Cycling". No AirSeg or OACtrl -- ZnSys takes neither as a
+    // child in the data model.
+    //
+    // Heat-pump variants add their backup coil AFTER the Fan, which is the one place
+    // the zone-level order departs from the AirSys build, where it sits before the
+    // Fan. Both orders are taken from real records rather than assumed:
+    // 010212-SchSml-PVAVAirZnSys.cibd25 has a PTHP ZnSys ordered
+    // CoilClg -> CoilHtg(HeatPump) -> Fan -> CoilHtg(Resistance), present in both the
+    // 2022 and 2025 corpora. Only one such ZnSys exists corpus-wide, so the ordering
+    // rests on a single example -- it is very likely cosmetic, since the link is by
+    // name through HtPumpSuppCoilHtgRef rather than by position.
     const spec = PACKAGED_SZ_SPECS[sys.attrs.Type];
     if(sys.attrs.FanCtrl === undefined) setPlainAttr(sys, "FanCtrl", "Cycling");
     const cc = makeRecord("CoilClg", sys.name + " CoilClg");
@@ -4109,7 +4130,14 @@ function buildSystemComponents(doc, sys){
     setPlainAttr(hc, "Type", spec.htg);
     const fan = makeRecord("Fan", sys.name + " Fan");
     setPlainAttr(fan, "CtrlMthd", "ConstantVolume");
-    appendHvacChildren(doc, sys, [cc, hc, fan]);
+    const znKids = [cc, hc, fan];
+    if(spec.znSupp && spec.supp){
+      const supp = makeRecord("CoilHtg", sys.name + " SuppHtg");
+      setPlainAttr(supp, "Type", spec.supp);
+      setPlainAttr(hc, "HtPumpSuppCoilHtgRef", supp.name);
+      znKids.push(supp);
+    }
+    appendHvacChildren(doc, sys, znKids);
   } else if(sys.attrs.Type === "Exhaust"){
     // Central exhaust (AirSys) confirmed against OffLrg-PrkgLabKitchen.cibd25:
     //   AirSys[ExhSysType/ExhOperMode/ExhCtrlMthd] -> AirSeg(Type="Exhaust") -> Fan
@@ -7509,9 +7537,19 @@ renderStepDetail(WORKFLOW_STEPS[0]);
 .vp-entry ul { margin: 5px 0 0; padding-left: 16px; color: var(--ink-muted, #6E737B); line-height: 1.65; }
 </style>
 
-<div id="ver-badge">v1.17.1</div>
+<div id="ver-badge">v1.18.0</div>
 <div id="ver-panel">
   <div class="vp-title">Changelog</div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.18.0</span><span class="vp-date">2026-08-19</span>
+    <ul>
+      <li>Added <code>ZnSys:SZDFHP</code> &mdash; the zone-level dual-fuel heat pump. Zone-level SZAC and SZHP went in last release; this was its sibling in the same enum, missed</li>
+      <li><strong>Corrected:</strong> zone-level heat pumps were built with no supplemental heating coil, on the assumption that zone units never have one. A real PTHP <code>ZnSys</code> in the corpus does, and so does the ruleset&rsquo;s own <code>PTHP-ResZnSys</code> baseline block. Zone-level SZHP now gets a Resistance backup and SZDFHP a Furnace one</li>
+      <li>The zone-level backup coil is placed <em>after</em> the Fan, which is where the real record has it &mdash; the one point where the zone-level child order departs from the air-system build, where it sits before the Fan</li>
+      <li>PTAC, PTHP, MiniSplitHP, WSHP and zone-level SPVHP still get no backup coil, matching the corpus majority for each</li>
+      <li>The air-system type list is now confirmed complete against CBECC&rsquo;s own dropdown &mdash; 14 types, exact match. Zone systems are complete but for <code>VentilationOnly</code>, which is deliberately excluded</li>
+    </ul>
+  </div>
   <div class="vp-entry">
     <span class="vp-ver">v1.17.1</span><span class="vp-date">2026-08-19</span>
     <ul>
