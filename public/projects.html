@@ -153,8 +153,8 @@
   <h2>Projects</h2>
 
   <div id="uploadZone" onclick="document.getElementById('fileInput').click()">
-    <div class="label">Upload a .cibd25 file</div>
-    <div class="hint">Click or drag a file here to create a new project</div>
+    <div class="label">Upload a .cibd file</div>
+    <div class="hint">Click or drag a file here to create a new project &mdash; T24-2022 and T24-2025 are fully supported, T24-2028 partially (CEC has not published its Appendix 5.4A/5.4C tables yet)</div>
   </div>
   <input type="file" id="fileInput" accept=".cibd25,.cibd22,.cibd28,.ribd25,.ribd22,.ribd28">
 
@@ -162,7 +162,7 @@
   <div class="error-banner" id="errorBanner"></div>
 
   <div id="projectGrid"></div>
-  <div id="emptyState" style="display:none">No projects yet. Upload a .cibd25 file to get started.</div>
+  <div id="emptyState" style="display:none">No projects yet. Upload a .cibd file to get started.</div>
 
   <div class="archive-section" id="archiveSection" style="display:none">
     <div class="archive-toggle" id="archiveToggle">
@@ -450,9 +450,16 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
 .vp-entry ul { margin: 5px 0 0; padding-left: 16px; color: var(--ink-muted, #6E737B); line-height: 1.65; }
 </style>
 
-<div id="ver-badge">v1.20.0</div>
+<div id="ver-badge">v1.20.4</div>
 <div id="ver-panel">
   <div class="vp-title">Changelog</div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.20.4</span><span class="vp-date">2026-08-20</span>
+    <ul>
+      <li>Generalised the user-facing copy that still assumed 2025. The upload zone now reads &ldquo;Upload a .cibd file&rdquo; and names what is actually supported (T24-2022 and T24-2025 fully, T24-2028 partially &mdash; CEC has not published its Appendix 5.4A/5.4C tables yet); Step 1&rsquo;s card reads <code>.cibdXX</code>; the page title, records-panel hint, empty state, and admin file-size note drop the year</li>
+      <li>The water-side step no longer claims its options are &ldquo;CBECC-Com 2025 valid values&rdquo; &mdash; it says they are constrained to the loaded file&rsquo;s code year, which is what the gating has actually done since v1.17.0</li>
+    </ul>
+  </div>
   <div class="vp-entry">
     <span class="vp-ver">v1.20.0</span><span class="vp-date">2026-08-19</span>
     <ul>

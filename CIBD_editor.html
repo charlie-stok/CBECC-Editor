@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Stok | CBECC .cibd25 Editor</title>
+<title>Stok | CBECC .cibd Editor</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -413,9 +413,9 @@
     <button class="btn" id="downloadBtn" disabled>Download</button>
   </div>
   <div id="main" class="mode-workflow">
-    <div id="types"><div class="hint">Open a .cibd25 file to see record types (Proj, Spc, ExtWall, ResHVACSys, etc).</div></div>
+    <div id="types"><div class="hint">Open a .cibd file to see record types (Proj, Spc, ExtWall, ResHVACSys, etc).</div></div>
     <div id="records"></div>
-    <div id="detail"><div class="empty">Select a record type, then a record, to edit its fields here.<br><br>Multifamily / nonres .cibd25 files only &mdash; single-family .ribd25 uses the same grammar, so this also works on those.</div></div>
+    <div id="detail"><div class="empty">Select a record type, then a record, to edit its fields here.<br><br>Multifamily / nonres .cibd files only &mdash; single-family .ribd uses the same grammar, so this also works on those.</div></div>
     <div id="viewer3d">
       <div id="canvasWrap">
         <div class="hint3d" id="hint3d">Load a file with PolyLp/CartesianPt (Detailed) geometry to see it here.<br>Click a surface to select its space. Drag to orbit, scroll to zoom.</div>
@@ -5557,8 +5557,8 @@ function renderOpenFileForm(container){
     `;
   } else {
     wrap.innerHTML = `
-      <div class="desc" style="margin-bottom:14px;">Start here \u2014 open the .cibd25 file you want to work on.</div>
-      <button class="btn primary">Open .cibd25 file</button>
+      <div class="desc" style="margin-bottom:14px;">Start here \u2014 open the .cibd file you want to work on.</div>
+      <button class="btn primary">Open .cibd file</button>
     `;
   }
   wrap.querySelector('button').addEventListener('click', () => fileInput.click());
@@ -9208,9 +9208,9 @@ const WORKFLOW_STEPS = [
   {
     id: "open-file", group: "core",
     title: "Open file",
-    subtitle: ".cibd25",
+    subtitle: ".cibdXX",
     kind: "interactive",
-    description: "Start here. Load the .cibd25 file you want to work through.",
+    description: "Start here. Load the .cibd file you want to work through.",
     renderForm: renderOpenFileForm,
   },
   {
@@ -9381,7 +9381,7 @@ const WORKFLOW_STEPS = [
       "Each loop card also shows its <strong>demands</strong>: the coils auto-wired from the HVAC systems defined earlier. " +
       "Use &ldquo;Auto-create defaults&rdquo; to generate loops in one click, then drill into each loop " +
       "to configure sources: equipment type, condenser type, fuel, draft type (boilers), modulation control " +
-      "(towers), and pumping mode. All options are constrained to CBECC-Com 2025 valid values.",
+      "(towers), and pumping mode. All options are constrained to the values valid in the loaded file&rsquo;s code year.",
     renderForm: renderCreateWaterSideForm,
   },
   {
@@ -9710,9 +9710,16 @@ renderStepDetail(WORKFLOW_STEPS[0]);
 .vp-entry ul { margin: 5px 0 0; padding-left: 16px; color: var(--ink-muted, #6E737B); line-height: 1.65; }
 </style>
 
-<div id="ver-badge">v1.20.3</div>
+<div id="ver-badge">v1.20.4</div>
 <div id="ver-panel">
   <div class="vp-title">Changelog</div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.20.4</span><span class="vp-date">2026-08-20</span>
+    <ul>
+      <li>Generalised the user-facing copy that still assumed 2025. The upload zone now reads &ldquo;Upload a .cibd file&rdquo; and names what is actually supported (T24-2022 and T24-2025 fully, T24-2028 partially &mdash; CEC has not published its Appendix 5.4A/5.4C tables yet); Step 1&rsquo;s card reads <code>.cibdXX</code>; the page title, records-panel hint, empty state, and admin file-size note drop the year</li>
+      <li>The water-side step no longer claims its options are &ldquo;CBECC-Com 2025 valid values&rdquo; &mdash; it says they are constrained to the loaded file&rsquo;s code year, which is what the gating has actually done since v1.17.0</li>
+    </ul>
+  </div>
   <div class="vp-entry">
     <span class="vp-ver">v1.20.3</span><span class="vp-date">2026-08-20</span>
     <ul>
