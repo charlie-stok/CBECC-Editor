@@ -622,6 +622,7 @@ function loadDocFromText(text, filename) {
   try {
     doc = parseDoc(text);
     doc.codeYear = detectCodeYear(doc.rulesetFilename);
+    doc.codeYearPaused = (doc.codeYear === 2019);
     dirtyRecords.clear();
     activeType = null; activeRecord = null;
     filenameLabel.textContent = filename;
@@ -5544,9 +5545,14 @@ function renderOpenFileForm(container){
   const wrap = document.createElement('div');
   if(doc){
     const cys = codeYearStatus();
+    const pausedHtml = doc.codeYearPaused
+      ? `<div style="margin-top:12px;padding:10px 12px;background:rgba(217,119,6,0.12);border:1px solid #d97706;border-radius:6px;font-size:12px;line-height:1.55;">
+           <strong style="color:#d97706;">T24-2019 editing is paused.</strong> The file loaded successfully and can be downloaded unchanged, but workflow steps are unavailable for this code year. Open a T24-2022, 2025, or 2028 file to use the editor.
+         </div>` : "";
     wrap.innerHTML = `
       <div class="result-summary">Loaded: <strong>${filenameLabel.textContent}</strong> (${doc.records.length} records) &mdash; T24-${cys.year}${cys.note ? ", " + cys.note : ""}</div>
-      <button class="btn primary">Open a different file</button>
+      ${pausedHtml}
+      <button class="btn primary" style="margin-top:10px;">Open a different file</button>
       <div style="font-size:12px;color:var(--text-dim);margin-top:10px;">Loading a new file resets the workflow (applied-step checkmarks, 3D view, everything below).</div>
     `;
   } else {
@@ -9425,6 +9431,13 @@ function renderWorkflowSidebar(){
   let visibleNum = 0;
   let lastGroup = null;
 
+  if(doc && doc.codeYearPaused){
+    const banner = document.createElement('div');
+    banner.style.cssText = "background:rgba(217,119,6,0.12);border:1px solid #d97706;border-radius:6px;padding:8px 10px;margin-bottom:10px;font-size:11px;line-height:1.5;";
+    banner.innerHTML = `<strong style="color:#d97706;">T24-2019 editing paused</strong> &mdash; open a 2022, 2025, or 2028 file to use these steps.`;
+    listEl.appendChild(banner);
+  }
+
   WORKFLOW_STEPS.forEach((step) => {
     const group = step.group || 'core';
     const meta  = STEP_GROUPS[group] || {};
@@ -9560,12 +9573,16 @@ function renderWorkflowSidebar(){
         break;
     }
 
+    const isPaused = !!(doc && doc.codeYearPaused &&
+      step.id !== "open-file" && step.id !== "download-file");
     row.className = "step-row" + (step.id === activeStepId ? " active" : "") +
       (isStale ? " stale" : (isDone ? " done" : ""));
+    if(isPaused) row.style.cssText = "opacity:0.35;cursor:default;pointer-events:none;";
     row.innerHTML =
       `<div class="step-num">${isStale ? "&#9888;" : (isDone ? "&check;" : step._num)}</div>` +
       `<div class="step-title">${step.title}<span class="sub">${step.subtitle}</span></div>`;
     row.addEventListener('click', () => {
+      if(isPaused) return;
       activeStepId = step.id;
       renderWorkflowSidebar();
       renderStepDetail(step);
@@ -9576,6 +9593,16 @@ function renderWorkflowSidebar(){
 
 function renderStepDetail(step){
   const el = document.getElementById('stepDetail');
+  if(doc && doc.codeYearPaused && step.id !== "open-file" && step.id !== "download-file"){
+    parkViewer3DSafely();
+    el.classList.remove('wf-wide');
+    el.innerHTML = `<h2>${step.title}</h2>
+      <div style="margin-top:16px;padding:12px 16px;background:rgba(217,119,6,0.1);border:1px solid #d97706;border-radius:6px;font-size:13px;line-height:1.6;">
+        <strong style="color:#d97706;">T24-2019 editing is paused.</strong><br>
+        This step is unavailable for T24-2019 files. Open a T24-2022, 2025, or 2028 file to use it.
+      </div>`;
+    return;
+  }
   // Always park first, unconditionally -- including when re-rendering the
   // SAME step (e.g. re-clicking it), which still wipes and rebuilds #stepDetail's
   // content. Skipping this for "the step that already owns it" was the bug:
@@ -9683,9 +9710,15 @@ renderStepDetail(WORKFLOW_STEPS[0]);
 .vp-entry ul { margin: 5px 0 0; padding-left: 16px; color: var(--ink-muted, #6E737B); line-height: 1.65; }
 </style>
 
-<div id="ver-badge">v1.20.2</div>
+<div id="ver-badge">v1.20.3</div>
 <div id="ver-panel">
   <div class="vp-title">Changelog</div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.20.3</span><span class="vp-date">2026-08-20</span>
+    <ul>
+      <li>T24-2019 editing paused: loading a 2019 file shows a clear amber notice; workflow steps 2&ndash;13 are greyed out and non-clickable; download (step 14) still works; all 2019 code paths remain intact for future re-enablement</li>
+    </ul>
+  </div>
   <div class="vp-entry">
     <span class="vp-ver">v1.20.2</span><span class="vp-date">2026-08-20</span>
     <ul>
