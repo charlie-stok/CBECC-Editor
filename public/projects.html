@@ -461,6 +461,29 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
     </ul>
   </div>
   <div class="vp-entry">
+    <span class="vp-ver">v1.20.3</span><span class="vp-date">2026-08-20</span>
+    <ul>
+      <li>T24-2019 editing paused: loading a 2019 file shows a clear amber notice; workflow steps 2&ndash;13 are greyed out and non-clickable; download (step 14) still works; all 2019 code paths remain intact for future re-enablement</li>
+    </ul>
+  </div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.20.2</span><span class="vp-date">2026-08-20</span>
+    <ul>
+      <li>QA fix: <code>WtrHtr:FluidSegInRef</code> is now written <em>only</em> for heat-pump water heaters (<code>HeatPumpPackaged</code> / <code>HeatPumpSplit</code>), not for conventional WHs &mdash; corpus-confirmed via a user-supplied HPWH file</li>
+      <li>Switching WtrHtr type to HPWH now auto-wires <code>FluidSegInRef</code> to the loop&rsquo;s PrimaryReturn; switching back clears it</li>
+      <li>QA fix: <code>WtrHtr:WtrHtrSetPtTemp</code> removed from equipment form &mdash; setpoint is configured on the FluidSys, not the WtrHtr record</li>
+      <li>QA confirmed: <code>AirSeg:Path = &ldquo;Ducted&rdquo;</code> is valid for VAV/PVAV supply and return segments; <code>HtPump:HtgFluidSegInRef</code> / <code>HtgFluidSegOutRef</code> confirmed valid for HHW heat pump plant</li>
+    </ul>
+  </div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.20.1</span><span class="vp-date">2026-08-20</span>
+    <ul>
+      <li>QA fix: <code>WtrHtr:FluidSegInRef</code> removed for conventional WHs (not used by CBECC-Com)</li>
+      <li>QA fix: <code>WtrHtr:FuelSrc</code> now writes <code>&ldquo;Electricity&rdquo;</code> (full word) for heat-pump water heaters, matching corpus</li>
+      <li>QA fix: <code>HtRej:FanType</code> removed &mdash; not a valid attribute per corpus; editor no longer sets or displays it</li>
+    </ul>
+  </div>
+  <div class="vp-entry">
     <span class="vp-ver">v1.20.0</span><span class="vp-date">2026-08-19</span>
     <ul>
       <li>The four placeholder steps are real editors now. <strong>Envelope</strong> covers the glazing library (<code>FenCons</code> U-factor, SHGC, VT and the certification/framing enums), the opaque assembly library (layer stacks and cool-roof properties), every surface&rsquo;s construction assignment with bulk assignment per surface type, and window-to-wall ratio by orientation with a target that rescales the window polygons in place</li>
