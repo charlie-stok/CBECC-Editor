@@ -458,9 +458,23 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
 .vp-entry ul { margin: 5px 0 0; padding-left: 16px; color: var(--ink-muted, #6E737B); line-height: 1.65; }
 </style>
 
-<div id="ver-badge">v1.19.0</div>
+<div id="ver-badge">v1.20.0</div>
 <div id="ver-panel">
   <div class="vp-title">Changelog</div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.20.0</span><span class="vp-date">2026-08-19</span>
+    <ul>
+      <li>The four placeholder steps are real editors now. <strong>Envelope</strong> covers the glazing library (<code>FenCons</code> U-factor, SHGC, VT and the certification/framing enums), the opaque assembly library (layer stacks and cool-roof properties), every surface&rsquo;s construction assignment with bulk assignment per surface type, and window-to-wall ratio by orientation with a target that rescales the window polygons in place</li>
+      <li><strong>Interior lighting</strong> edits <code>Spc:IntLPDReg</code> per space with the Appendix 5.4A default offered per row and in bulk, and edits the luminaire path (<code>LumCnt</code>, and the <code>Lum</code> library&rsquo;s power and fixture/lamp type) where a space has lighting systems of its own. A space on the luminaire path has its density greyed out, because the ruleset computes power from the luminaires and ignores it</li>
+      <li><strong>Process + plug loads</strong> edits all five densities on <code>Spc</code>, each with the ruleset&rsquo;s own error and warning band on the box, plus the heat-gain split for whichever categories carry a load and elevator/escalator loads. <strong>Renewables</strong> creates, edits and deletes <code>PVArray</code> and <code>Batt</code> records</li>
+      <li>A second <strong>generated</strong> table joins the system enums: a field model of datatypes, units, option sets, validation bands and input classes, read from each code year&rsquo;s own Input Data Model, and the Appendix 5.4A internal-load defaults read from each year&rsquo;s own copy of that table. Nothing in these four steps is hand-transcribed &mdash; not the option sets, not the bands, not which construction a surface may accept. <code>tools/extract_field_model.js --check</code> and <code>tools/extract_load_defaults.js --check</code> fail if either drifts</li>
+      <li>The option sets narrow the way the ruleset narrows them, rather than offering the union: <code>FenCons:FenProdType</code> follows <code>FenType</code>, <code>CertificationMthd</code> follows <code>AssmContext</code> <em>and</em> <code>FenType</code>, and PV module types widen only under the Detailed specification method. Real cycle differences are respected &mdash; <code>Batt:Ctrl</code> offers Advanced DR Control under T24-2022 and not under T24-2025, three Appendix 5.4A lighting-power rows differ between the two cycles, and a field that is not an input in the file&rsquo;s cycle says so instead of rendering an empty picker</li>
+      <li><strong>Corrected:</strong> the old renewables summary read fields that do not exist. There is no <code>PVArray:DCCap</code>, <code>Tilt</code> or <code>ModuleType</code>-under-<code>Simplified</code>-only, and no <code>Batt:Cap</code>, <code>MaxChgPwr</code>, <code>MaxDischgPwr</code> or <code>CtrlMthd</code>. The real inputs are <code>DCSysSize</code>, <code>Az</code>, <code>TiltInp</code> with <code>TiltAngle</code>/<code>TiltPitch</code>, and <code>MaxCap</code>/<code>Ctrl</code>. Every PV and battery figure the old view displayed was blank for that reason</li>
+      <li><strong>Fixed:</strong> every opening after the first on a surface was silently dropped. The hierarchy derived an opening&rsquo;s host from the last geometry owner, which is the previous <em>opening</em> once a wall has more than one &mdash; so a three-window wall reported one window in the 3D view and in every area total. Skylights were worse: <code>Skylt</code> matched neither branch, so a skylight&rsquo;s polygon overwrote its host roof&rsquo;s own coordinates and the roof came out skylight-sized</li>
+      <li>Envelope areas and orientations come from the surfaces&rsquo; own polygons via Newell&rsquo;s method, not the optional <code>Area</code> attribute, which only exists in Simplified-geometry files. A vertical wall has no plan-view area at all, which is why the floor-area shoelace could not be reused</li>
+      <li>The window rescale never pushes a window past the edge of its host wall: the factor is reduced for that window and the result says the orientation landed short. It is also honest about what it does not do &mdash; opaque assemblies have no U-factor field (CBECC computes it from the layer stack), refrigeration density has been NotInput since the 2022.3.0 ruleset, and the prescriptive PV/battery sizing requirement is not checked</li>
+    </ul>
+  </div>
   <div class="vp-entry">
     <span class="vp-ver">v1.19.0</span><span class="vp-date">2026-08-19</span>
     <ul>

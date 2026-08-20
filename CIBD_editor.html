@@ -952,11 +952,17 @@ function renderBulkPanel(){
 ======================================================================= */
 
 const SURFACE_TYPES = new Set(["UndgrFlr","Roof","ExtWall","IntWall"]);
-const OPENING_TYPES = new Set(["Win","Dr"]);
+const OPENING_TYPES = new Set(["Win","Dr","Skylt"]);
 
 function buildHierarchy(doc){
   let currentSpc = null;
   let lastGeomOwner = null; // most recent surface/opening record, to attach PolyLp/points to
+  // The host surface is tracked separately from the geometry owner. They are not the
+  // same thing: a wall with three windows is followed by three opening records, and
+  // after the first one lastGeomOwner is an opening, not the wall. Deriving the host
+  // from it dropped every opening after the first -- so a three-window wall reported
+  // one window, and a roof with 32 skylights reported one skylight.
+  let currentSurface = null;
   let currentFloorIndex = -1;
   const spaces = [];
 
@@ -974,13 +980,15 @@ function buildHierarchy(doc){
       // but if left unhandled it would land on lastGeomOwner (the PREVIOUS
       // space's last surface) and silently overwrite its real coordinates.
       lastGeomOwner = null;
+      currentSurface = null;
     } else if(SURFACE_TYPES.has(r.type)){
       r.openings = [];
       r.spc = currentSpc;
       if(currentSpc) currentSpc.surfaces.push(r);
       lastGeomOwner = r;
+      currentSurface = r;
     } else if(OPENING_TYPES.has(r.type)){
-      r.host = lastGeomOwner && SURFACE_TYPES.has(lastGeomOwner.type) ? lastGeomOwner : null;
+      r.host = currentSurface;
       if(r.host) r.host.openings.push(r);
       lastGeomOwner = r;
     } else if(r.type === "PolyLp"){
@@ -1009,6 +1017,7 @@ const SURFACE_COLORS = {
   Roof: 0x7A8A53,     // "moss" from the Stok chart-series palette
   Win: 0x4B8A89,      // --color-accent (brand teal)
   Dr: 0xC26B3D,        // "clay" from the Stok chart-series palette
+  Skylt: 0x7FB4B3,     // brand teal, lightened -- a roof opening, sibling of Win
 };
 
 let scene, camera, renderer3d, controls3d, raycaster, canvasEl;
@@ -1469,10 +1478,10 @@ let activeStepId = null;
 // State persists in localStorage so the user's toggle survives a page refresh.
 const STEP_GROUPS = {
   core:       { label: "Initialize",  togglable: true },
-  envelope:   { label: "Envelope",    togglable: true,  comingSoon: true },
-  lighting:   { label: "Lighting",    togglable: true,  comingSoon: true },
-  process:    { label: "Process",     togglable: true,  comingSoon: true },
-  renewables: { label: "Renewables",  togglable: true,  comingSoon: true },
+  envelope:   { label: "Envelope",    togglable: true },
+  lighting:   { label: "Lighting",    togglable: true },
+  process:    { label: "Process",     togglable: true },
+  renewables: { label: "Renewables",  togglable: true },
   hvac:       { label: "HVAC / SHW",  togglable: true },
   finalize:   { label: "Finalize",    togglable: true },
 };
@@ -7039,190 +7048,2148 @@ function detectFirstIncompleteStep(){
 }
 
 /* =======================================================================
-   PLACEHOLDER — ENVELOPE
-   Shows surface records (ExtWall, Roof, Win, etc.) with ConsAssmRef status.
-   Full implementation (construction assignment, U-values, WWR) is future work.
+   FIELD MODEL -- per-code-year datatypes, units, enum option sets,
+   validation bands and input classes, GENERATED from each code year's own
+   "Input Data Model" dump. See tools/extract_field_model.js; do not edit
+   by hand. test_envelope_loads.js re-derives it and fails if it drifted.
+
+   Covers the objects the envelope / lighting / process-load / renewables
+   steps edit. Deliberately not covered: IntLtgSys:AllowType, which the
+   ruleset conditions on the parent space's function -- about 600 branches.
+   Those steps report the value and leave it alone.
 ======================================================================= */
-function renderEnvelopePlaceholder(container){
-  if(!doc){ container.innerHTML = '<div class="warn-line">Load a file first.</div>'; return; }
-  // Opaque surfaces reference ConsAssmRef; fenestration surfaces reference FenConsRef.
-  const FEN_TYPES    = new Set(["Win","Dr","Skylt"]);
-  const OPAQUE_TYPES = new Set(["ExtWall","Roof","UndgrFlr","UndgrWall","ExtFlr","IntWall","IntFlr","Ceiling"]);
-  const surfaces = doc.records.filter(r => FEN_TYPES.has(r.type) || OPAQUE_TYPES.has(r.type));
-  let html = `<div class="wf-placeholder-note">Placeholder — full envelope editing (construction assignment, U-values, window-to-wall ratio) will be built in a future session.</div>`;
-  if(!surfaces.length){
-    container.innerHTML = html + '<div style="color:var(--text-dim);font-size:12px;">No surface records found in this file.</div>';
-    return;
+const FIELD_MODEL = {
+  2022: {
+    Batt: {"SimStandaloneBatt":{"type":"Integer","long":"SimulateStandaloneBattery","inputClass":"Defaulted"},"MaxCap":{"type":"Float","long":"MaximumCapacity","units":"kWh","inputClass":"Defaulted","error":{"min":0}},"Ctrl":{"type":"Enumeration","long":"Control","enums":[{"vals":["- specify -","Basic","Time of Use","Advanced DR Control"],"def":"Basic","when":[["Proj:EnableResearchMode","1"]]},{"vals":["Time of Use","Advanced DR Control"],"def":"Time of Use","when":[["Batt:AllowStandaloneBatt","1"]]},{"vals":["Basic","Time of Use","Advanced DR Control"],"def":"Basic"}],"inputClass":"Defaulted"},"StandaloneChgStartHr":{"type":"Integer","long":"StandaloneChargeStartHour","inputClass":"Defaulted"},"ChrgEff":{"type":"Float","long":"ChargeEfficiency","units":"frac","inputClass":"Defaulted","error":{"min":0,"max":1}},"DschrgEff":{"type":"Float","long":"DischargeEfficiency","units":"frac","inputClass":"Defaulted","error":{"min":0,"max":1}},"AllowBattRoundTripEff":{"type":"Integer","long":"AllowBatteryRoundTripEfficiency","inputClass":"Defaulted"},"RoundTripEff":{"type":"Float","long":"RoundTripEfficiency","units":"frac","inputClass":"Defaulted","error":{"min":0,"max":1}},"NumRankedDays":{"type":"Integer","long":"NumberRankedDays","inputClass":"Optional","error":{"min":1,"max":365}}},
+    Ceiling: {"Area":{"type":"Float","long":"Area","units":"ft2","inputClass":"Conditional","error":{"min":0.01}},"AdjacentSpcRef":{"type":"ObjectRef","long":"AdjacentSpaceReference","inputClass":"Required","refs":[{"type":"Spc"},{"type":"ResZn"},{"type":"ResOtherZn"}]},"ConsAssmRef":{"type":"ObjectRef","long":"ConstructAssemblyReference","inputClass":"Required","refs":[{"type":"ConsAssm","filter":["ConsAssm:CompatibleSurfType","Ceiling"]}]}},
+    ConsAssm: {"CompatibleSurfType":{"type":"Enumeration","long":"CompatibleSurfaceType","enums":[{"vals":["ExteriorWall"],"def":"ExteriorWall","when":[["ConsAssm:AssignedSurfType","1"]]},{"vals":["Roof"],"def":"Roof","when":[["ConsAssm:AssignedSurfType","2"]]},{"vals":["ExteriorFloor"],"def":"ExteriorFloor","when":[["ConsAssm:AssignedSurfType","3"]]},{"vals":["UndergroundWall"],"def":"UndergroundWall","when":[["ConsAssm:AssignedSurfType","4"]]},{"vals":["UndergroundFloor"],"def":"UndergroundFloor","when":[["ConsAssm:AssignedSurfType","5"]]},{"vals":["InteriorWall"],"def":"InteriorWall","when":[["ConsAssm:AssignedSurfType","6"]]},{"vals":["Ceiling"],"def":"Ceiling","when":[["ConsAssm:AssignedSurfType","7"]]},{"vals":["InteriorFloor"],"def":"InteriorFloor","when":[["ConsAssm:AssignedSurfType","8"]]},{"vals":["ExteriorWall","Roof","ExteriorFloor","UndergroundWall","UndergroundFloor","InteriorWall","Ceiling","InteriorFloor"],"def":null}],"inputClass":"Required"},"FireRtdFlag":{"type":"Integer","long":"FireRatedFlag","inputClass":"Defaulted"},"SlabType":{"type":"Enumeration","long":"SlabType","enums":[{"vals":["- specify -","HeatedSlabOnGrade","HeatedSlabBelowGrade","UnheatedSlabOnGrade","UnheatedSlabBelowGrade"],"def":"- specify -"}],"inputClass":"Optional"},"SlabInsOrientation":{"type":"Enumeration","long":"SlabInsulationOrientation","enums":[{"vals":["None","12inHorizontal","24inHorizontal","36inHorizontal","48inHorizontal","12inVertical","24inVertical","36inVertical","48inVertical","HorizontalAndVertical","FullyInsulatedSlab"],"def":"None"}],"inputClass":"Optional"},"SlabInsThrmlR":{"type":"Enumeration","long":"SlabInsulationThermalResistance","enums":[{"vals":["R0"],"def":"R0","when":[["ConsAssm:SlabInsOrientation","None"]]},{"vals":["R0","R5","R7_5","R10","R15"],"def":"R0","when":[["ConsAssm:SlabInsOrientation","12inHorizontal"]]},{"vals":["R0","R5","R7_5","R10","R15"],"def":"R0","when":[["ConsAssm:SlabInsOrientation","24inHorizontal"]]},{"vals":["R0","R5","R7_5","R10","R15"],"def":"R0","when":[["ConsAssm:SlabInsOrientation","36inHorizontal"]]},{"vals":["R0","R5","R7_5","R10","R15"],"def":"R0","when":[["ConsAssm:SlabInsOrientation","48inHorizontal"]]},{"vals":["R0","R5","R7_5","R10","R15","R20","R25","R30"],"def":"R0","when":[["ConsAssm:SlabInsOrientation","12inVertical"]]},{"vals":["R0","R5","R7_5","R10","R15","R20","R25","R30"],"def":"R0","when":[["ConsAssm:SlabInsOrientation","24inVertical"]]},{"vals":["R0","R5","R7_5","R10","R15","R20","R25","R30"],"def":"R0","when":[["ConsAssm:SlabInsOrientation","36inVertical"]]},{"vals":["R0","R5","R7_5","R10","R15","R20","R25","R30"],"def":"R0","when":[["ConsAssm:SlabInsOrientation","48inVertical"]]},{"vals":["R0","R5","R7_5","R10","R15","R20","R25","R30","R35","R40","R45","R50","R55"],"def":"R0","when":[["ConsAssm:SlabInsOrientation","FullyInsulatedSlab"]]},{"vals":["R0","R5","R7_5","R10","R15","R20","R25","R30"],"def":"R0","when":[["ConsAssm:SlabInsOrientation","HorizontalAndVertical"]]}],"inputClass":"Optional"},"FieldAppliedCoating":{"type":"Integer","long":"FieldAppliedCoating","inputClass":"Required"},"CRRCInitialRefl":{"type":"Float","long":"CRRCInitialReflectance","inputClass":"Required","error":{"min":0,"max":1}},"CRRCAgedRefl":{"type":"Float","long":"CRRCAgedReflectance","inputClass":"Optional","error":{"min":0,"max":1}},"CRRCInitialEmit":{"type":"Float","long":"CRRCInitialEmittance","inputClass":"Required","error":{"min":0,"max":1}},"CRRCAgedEmit":{"type":"Float","long":"CRRCAgedEmittance","inputClass":"Required","error":{"min":0,"max":1}},"MatRef":{"type":"ObjectRef","long":"MaterialReference","nVals":10,"inputClass":"Required","refs":[{"type":"Mat"}]},"RoofDens":{"type":"Integer","long":"RoofDensity","inputClass":"Defaulted"},"BuiltUpRoof":{"type":"Integer","long":"BuiltUpRoof","inputClass":"Defaulted"},"BallastedRoof":{"type":"Integer","long":"BallastedRoof","inputClass":"Defaulted"},"CRRCSRI":{"type":"Float","long":"CRRCSolarReflectanceIndex","inputClass":"Optional"}},
+    Dr: {"Status":{"type":"Enumeration","long":"Status","enums":[{"vals":["New","Existing","Altered"],"def":"New"}],"inputClass":"Required"},"DrConsRef":{"type":"ObjectRef","long":"DoorConstructionReference","inputClass":"Optional","refs":[{"type":"DrCons"}]},"Area":{"type":"Float","long":"Area","units":"ft2","inputClass":"Conditional","error":{"min":0.01}},"Hgt":{"type":"Float","long":"Height","units":"ft","inputClass":"Conditional","error":{"min":0.0001}},"Wd":{"type":"Float","long":"Width","units":"ft","inputClass":"Conditional","error":{"min":0.0001}}},
+    DrCons: {"Type":{"type":"Enumeration","long":"Type","enums":[{"vals":["- specify -","MetalInsulatedSingleLayerSectionalDoor","MetalInsulatedSwingingDoor","MetalUninsulatedDoubleLayerDoor","MetalUninsulatedSingleLayerDoor","MetalUninsulatedSingleLayerRollupDoor","WoodLessThan1.75inThickDoor","WoodGreaterThanOrEqualTo1.75inThickDoor"],"def":"- specify -"}],"inputClass":"Required"},"CertificationMthd":{"type":"Enumeration","long":"CertificationMethod","enums":[{"vals":["- specify -","NFRCRated","DefaultPerformance"],"def":"- specify -"}],"inputClass":"Required"},"UFactor":{"type":"Float","long":"UFactor","units":"Btu/h-\u00b0F-ft2","inputClass":"Optional"},"Open":{"type":"Enumeration","long":"Open","enums":[{"vals":["- specify -","Swinging","NonSwinging"],"def":"- specify -"}],"inputClass":"Optional"},"DrAutoCloser":{"type":"Integer","long":"DoorAutomaticCloser","inputClass":"Defaulted"}},
+    ExtFlr: {"Status":{"type":"Enumeration","long":"Status","enums":[{"vals":["New","Existing","Altered"],"def":null}],"inputClass":"Required"},"ConsAssmRef":{"type":"ObjectRef","long":"ConstructAssemblyReference","inputClass":"Required","refs":[{"type":"ConsAssm","filter":["ConsAssm:CompatibleSurfType","ExteriorFloor"]}]},"Area":{"type":"Float","long":"Area","units":"ft2","inputClass":"Conditional","error":{"min":0.01}}},
+    ExtWall: {"Status":{"type":"Enumeration","long":"Status","enums":[{"vals":["New","Existing","Altered"],"def":null}],"inputClass":"Required"},"ConsAssmRef":{"type":"ObjectRef","long":"ConstructAssemblyReference","inputClass":"Required","refs":[{"type":"ConsAssm","filter":["ConsAssm:CompatibleSurfType","ExteriorWall"]}]},"Area":{"type":"Float","long":"Area","units":"ft2","inputClass":"Conditional","error":{"min":0.01}},"Az":{"type":"Float","long":"Azimuth","units":"deg - relative to bldg. azimuth","inputClass":"Conditional","error":{"min":0,"max":360}},"Tilt":{"type":"Float","long":"Tilt","units":"deg","inputClass":"Conditional","error":{"min":0,"max":180}}},
+    FenCons: {"FenType":{"type":"Enumeration","long":"FenestrationType","enums":[{"vals":["VerticalFenestration","Skylight"],"def":null}],"inputClass":"Required"},"FenProdType":{"type":"Enumeration","long":"FenestrationProductType","enums":[{"vals":["- specify -","FixedWindow","OperableWindow","CurtainWall","GlazedDoor"],"def":"- specify -","when":[["FenCons:FenType","VerticalFenestration"]]},{"vals":["- specify -","FixedWindow","OperableWindow"],"def":"- specify -","when":[["FenCons:FenType","Skylight"]]}],"inputClass":"Conditional"},"AssmContext":{"type":"Enumeration","long":"AssemblyContext","enums":[{"vals":["Manufactured","FieldFabricated","SiteBuilt"],"def":"Manufactured","when":[["FenCons:FenType","VerticalFenestration"]]},{"vals":["Manufactured","SiteBuilt"],"def":"Manufactured","when":[["FenCons:FenType","Skylight"]]}],"inputClass":"Conditional"},"CertificationMthd":{"type":"Enumeration","long":"CertificationMethod","enums":[{"vals":["- specify -"],"def":"- specify -","when":[["FenCons:AssmContext","0"],["FenCons:FenType","VerticalFenestration"]]},{"vals":["- specify -","NFRCRated","DefaultPerformance"],"def":"NFRCRated","when":[["FenCons:AssmContext","Manufactured"],["FenCons:FenType","VerticalFenestration"]]},{"vals":["- specify -","DefaultPerformance"],"def":"DefaultPerformance","when":[["FenCons:AssmContext","FieldFabricated"],["FenCons:FenType","VerticalFenestration"]]},{"vals":["- specify -","NFRCRated","DefaultPerformance","COGEquations"],"def":"NFRCRated","when":[["FenCons:AssmContext","SiteBuilt"],["FenCons:FenType","VerticalFenestration"],["FenCons:Status","Existing"]]},{"vals":["- specify -","NFRCRated","DefaultPerformance"],"def":"NFRCRated","when":[["FenCons:AssmContext","SiteBuilt"],["FenCons:FenType","VerticalFenestration"]]},{"vals":["- specify -"],"def":"- specify -","when":[["FenCons:AssmContext","0"],["FenCons:FenType","Skylight"]]},{"vals":["- specify -","NFRCRated","DefaultPerformance","COGEquations"],"def":"NFRCRated","when":[["FenCons:AssmContext","Manufactured"],["FenCons:FenType","Skylight"]]},{"vals":["- specify -","DefaultPerformance","COGEquations"],"def":"DefaultPerformance","when":[["FenCons:AssmContext","FieldFabricated"],["FenCons:FenType","Skylight"]]},{"vals":["- specify -","NFRCRated","DefaultPerformance","COGEquations"],"def":"NFRCRated","when":[["FenCons:AssmContext","SiteBuilt"],["FenCons:FenType","Skylight"]]}],"inputClass":"Required"},"SkyltGlz":{"type":"Enumeration","long":"SkylightGlazing","enums":[{"vals":["- specify -"],"def":"- specify -","when":[["FenCons:FenType","VerticalFenestration"]]},{"vals":["- specify -","Glass","Plastic"],"def":"- specify -","when":[["FenCons:FenType","Skylight"]]}],"inputClass":"Conditional"},"SkyltCurb":{"type":"Enumeration","long":"SkylightCurb","enums":[{"vals":["- specify -"],"def":"- specify -","when":[["FenCons:FenType","VerticalFenestration"]]},{"vals":["- specify -","CurbMounted","DeckMounted"],"def":"- specify -","when":[["FenCons:FenType","Skylight"]]}],"inputClass":"Conditional"},"OperableWinConfiguration":{"type":"Enumeration","long":"OperableWindowConfiguration","enums":[{"vals":["- specify -","CasementAwning","Sliding"],"def":"- specify -"}],"inputClass":"Conditional"},"GreenhouseGardenWin":{"type":"Integer","long":"GreenhouseGardenWindow","inputClass":"Conditional"},"FenFrm":{"type":"Enumeration","long":"FenestrationFraming","enums":[{"vals":["- specify -"],"def":"- specify -","when":[["FenCons:CertificationMthd","- specify -"]]},{"vals":["- specify -"],"def":"- specify -","when":[["FenCons:CertificationMthd","NFRCRated"]]},{"vals":["- specify -","MetalFraming","NonMetalFraming"],"def":"- specify -","when":[["FenCons:AssmContext","FieldFabricated"]]},{"vals":["- specify -","MetalFraming","MetalFramingWithThermalBreak","NonMetalFraming"],"def":"- specify -"}],"inputClass":"Conditional"},"FenPanes":{"type":"Enumeration","long":"FenestrationPanes","enums":[{"vals":["- specify -"],"def":"- specify -","when":[["FenCons:CertificationMthd","- specify -"]]},{"vals":["- specify -"],"def":"- specify -","when":[["FenCons:CertificationMthd","NFRCRated"]]},{"vals":["- specify -","SinglePane","DoublePane","GlassBlock"],"def":"- specify -","when":[["FenCons:FenType","VerticalFenestration"],["FenCons:CertificationMthd","DefaultPerformance"]]},{"vals":["- specify -","SinglePane","DoublePane","TranslucentOrTransparentPanel"],"def":"- specify -","when":[["FenCons:FenType","Skylight"],["FenCons:CertificationMthd","DefaultPerformance"]]},{"vals":["- specify -"],"def":"- specify -","when":[["FenCons:CertificationMthd","3"]]}],"inputClass":"Conditional"},"GlzTint":{"type":"Enumeration","long":"GlazingTint","enums":[{"vals":["- specify -","ClearGlazing","TintedGlazing"],"def":"- specify -"}],"inputClass":"Conditional"},"WinDivider":{"type":"Enumeration","long":"WindowDivider","enums":[{"vals":["- specify -","NoDivider","TrueDividedLite","DividerBtwnPanesLessThan7_16in","DividerBtwnPanesGreaterThanOrEqualTo7_16in"],"def":"- specify -"}],"inputClass":"Conditional"},"Diffusing":{"type":"Integer","long":"Diffusing","inputClass":"Optional"},"SHGC":{"type":"Float","long":"SHGC","units":"frac.","inputClass":"Conditional"},"SHGCCOG":{"type":"Float","long":"SHGCCenterOfGlass","units":"frac.","inputClass":"Conditional"},"UFactor":{"type":"Float","long":"UFactor","units":"Btu/h-\u00b0F-ft2","inputClass":"Conditional","error":{"min":0,"max":2.5},"warn":{"max":2.3}},"UFactorCOG":{"type":"Float","long":"UFactorCenterOfGlass","units":"Btu/h-\u00b0F-ft2","inputClass":"Conditional"},"VT":{"type":"Float","long":"VisibleTransmittance","units":"frac.","inputClass":"Conditional"},"VTCOG":{"type":"Float","long":"VisibleTransmittanceCenterOfGlass","units":"frac.","inputClass":"Conditional"},"ShdgCred":{"type":"Integer","long":"ShadingCredit","inputClass":"Required"},"DynamicGlz":{"type":"Integer","long":"DynamicGlazing","inputClass":"Required"}},
+    IntFlr: {"Status":{"type":"Enumeration","long":"Status","enums":[{"vals":["New","Existing","Altered"],"def":null}],"inputClass":"Required"},"AdjacentSpcRef":{"type":"ObjectRef","long":"AdjacentSpaceReference","inputClass":"Required","refs":[{"type":"Spc"},{"type":"ResZn"},{"type":"ResOtherZn"}]},"ConsAssmRef":{"type":"ObjectRef","long":"ConstructAssemblyReference","inputClass":"Required","refs":[{"type":"ConsAssm","filter":["ConsAssm:CompatibleSurfType","InteriorFloor"]}]},"Area":{"type":"Float","long":"Area","units":"ft2","inputClass":"Conditional","error":{"min":0.01}}},
+    IntLtgSys: {"PwrReg":{"type":"Integer","long":"PowerRegulated","inputClass":"Defaulted"},"NonRegExclusion":{"type":"Enumeration","long":"NonRegulatedExclusion","enums":[{"vals":["- specify -","ThemeParksThemeAndSpecialEffects","FilmOrPhotoStudioLightingSeparatelySwitched","DanceFloorOrTheatrical","TemporaryExhibitSeparatelySwitchedInCivicTransConvOrHotel","ManufacturerInstalledInFreezerVendingFoodPrepScientificOrIndEquip","ExamSurgicalNightOrEquipmentIntegratedInMedicalOrClinical","PlantGrowthOrMaintWithMultiLevelAstroTimer","LightingEquipmentForSale","LightingDemonstrationEquipInLightingEducationFacilities","CBCRequiredExitSign","CBCRequiredExitwayOrEgressNormallyOff","HotelMotelGuestroom","HighRiseResidentialDwellingUnit","TemporaryLightingSystems","SmallAgriculturalBuilding","SmallUnconditionedAgriculturalBuilding","HistoricBuilding","SmallNonresidentialParkingGarage","SignageLighting","ATMLighting","SmallRefrigeratedCases","ElevatorLighting"],"def":"- specify -"}],"inputClass":"Conditional","error":{"min":0}},"LumRef":{"type":"ObjectRef","long":"LuminaireReference","nVals":5,"inputClass":"Optional","refs":[{"type":"Lum"}]},"LumCnt":{"type":"Float","long":"LuminaireCount","nVals":5,"inputClass":"Defaulted","error":{"min":0}},"LumStatus":{"type":"Enumeration","long":"LuminaireStatus","enums":[{"vals":["New","Altered","Existing","Future"],"def":null}],"nVals":5,"inputClass":"Defaulted"}},
+    IntWall: {"Status":{"type":"Enumeration","long":"Status","enums":[{"vals":["New","Existing","Altered"],"def":null}],"inputClass":"Required"},"AdjacentSpcRef":{"type":"ObjectRef","long":"AdjacentSpaceReference","inputClass":"Required","refs":[{"type":"Spc"},{"type":"ResZn"},{"type":"ResOtherZn"}]},"ConsAssmRef":{"type":"ObjectRef","long":"ConstructAssemblyReference","inputClass":"Required","refs":[{"type":"ConsAssm","filter":["ConsAssm:CompatibleSurfType","InteriorWall"]}]},"Area":{"type":"Float","long":"Area","units":"ft2","inputClass":"Conditional","error":{"min":0.01}}},
+    Lum: {"FxtrType":{"type":"Enumeration","long":"FixtureType","enums":[{"vals":["RecessedWithLens","RecessedOrDownlight","NotInCeiling"],"def":null}],"inputClass":"Required"},"LampType":{"type":"Enumeration","long":"LampType","enums":[{"vals":["LinearFluorescent","CFL","Incandescent","LED","MetalHalide","MercuryVapor","HighPressureSodium"],"def":null}],"inputClass":"Required"},"Pwr":{"type":"Float","long":"Power","units":"W","inputClass":"Compulsory","error":{"min":0}},"LumDescRpt":{"type":"String","long":"LuminaireDescriptionReport","inputClass":"Optional"}},
+    PVArray: {"SpecMthd":{"type":"Enumeration","long":"SpecificationMethod","enums":[{"vals":["Simplified","Detailed"],"def":null}],"inputClass":"Defaulted"},"DCSysSize":{"type":"Float","long":"DirectCurrentSystemSize","units":"kW","inputClass":"Defaulted"},"ModuleType":{"type":"Enumeration","long":"ModuleType","enums":[{"vals":["Standard","Premium"],"def":"Standard","when":[["PVArray:SpecMthd","Simplified"]]},{"vals":["Standard","Premium","Thin Film"],"def":"Standard"}],"inputClass":"Defaulted"},"CalFlexibleInstallOpt":{"type":"Enumeration","long":"CaliforniaFlexibleInstallOption","enums":[{"vals":["n/a","CFI1","CFI2"],"def":null}],"inputClass":"Defaulted"},"GeomSpecMthd":{"type":"Enumeration","long":"GeometrySpecificationMethod","enums":[{"vals":["azimuth and tilt"],"def":"azimuth and tilt","when":[["Proj:HavePVGeomObj","0"]]},{"vals":["azimuth and tilt","reference PVArrayGeom object"],"def":"azimuth and tilt"}],"inputClass":"Defaulted"},"LctnSpecMthd":{"type":"Enumeration","long":"LocationSpecificationMethod","enums":[{"vals":["- not specified -","X,Y,Z and height, width"],"def":null}],"inputClass":"Defaulted"},"RefX":{"type":"Float","long":"ReferenceX","units":"ft","inputClass":"Optional"},"RefY":{"type":"Float","long":"ReferenceY","units":"ft","inputClass":"Optional"},"RefZ":{"type":"Float","long":"ReferenceZ","units":"ft","inputClass":"Optional"},"Hgt":{"type":"Float","long":"Height","units":"ft","inputClass":"Optional","error":{"min":0.1}},"Wd":{"type":"Float","long":"Width","units":"ft","inputClass":"Optional","error":{"min":0.1}},"Az":{"type":"Float","long":"Azimuth","units":"deg","inputClass":"Defaulted","error":{"min":0,"max":360}},"TiltInp":{"type":"Enumeration","long":"TiltInput","enums":[{"vals":["deg","pitch"],"def":null}],"inputClass":"Defaulted"},"TiltPitch":{"type":"Float","long":"TiltPitch","units":"x in 12","inputClass":"Optional","error":{"min":0}},"TiltAngle":{"type":"Float","long":"TiltAngle","units":"deg","inputClass":"Optional","error":{"min":0,"max":90}},"ArrayType":{"type":"Enumeration","long":"ArrayType","enums":[{"vals":["Fixed (open rack)","Tracking (one axis)","Tracking (two axis)"],"def":null}],"inputClass":"Defaulted"},"PwrElec":{"type":"Enumeration","long":"Power electronics (microinverters, DC power optimizers)","enums":[{"vals":["- none -","Microinverters","DC Power Optimizers"],"def":"- none -"}],"inputClass":"Defaulted"},"SolarAccess":{"type":"Float","long":"Solar access (100 * incident solar energy given shading, ...","units":"%","inputClass":"Defaulted","error":{"min":0,"max":100}},"InverterEff":{"type":"Float","long":"InverterEfficiency","units":"%","inputClass":"Optional","error":{"min":0,"max":100}}},
+    Roof: {"Status":{"type":"Enumeration","long":"Status","enums":[{"vals":["New","Existing","Altered"],"def":null}],"inputClass":"Required"},"ConsAssmRef":{"type":"ObjectRef","long":"ConstructAssemblyReference","inputClass":"Required","refs":[{"type":"ConsAssm","filter":["ConsAssm:CompatibleSurfType","Roof"]}]},"Area":{"type":"Float","long":"Area","units":"ft2","inputClass":"Conditional","error":{"min":0.01}},"Az":{"type":"Float","long":"Azimuth","units":"deg - relative to bldg. azimuth","inputClass":"Conditional","error":{"min":0,"max":360}},"Tilt":{"type":"Float","long":"Tilt","units":"deg","inputClass":"Conditional","error":{"min":0,"max":180}}},
+    Skylt: {"Status":{"type":"Enumeration","long":"Status","enums":[{"vals":["New","Altered","Existing"],"def":null}],"inputClass":"Required"},"FenConsRef":{"type":"ObjectRef","long":"FenestrationConstructionReference","inputClass":"Compulsory","refs":[{"type":"FenCons","filter":["FenCons:FenType","Skylight"]}]},"Area":{"type":"Float","long":"Area","units":"ft2","inputClass":"Conditional","error":{"min":0.01}}},
+    Spc: {"LtgStatus":{"type":"Enumeration","long":"LightingStatus","enums":[{"vals":["New","Altered","Existing","Future"],"def":null}],"inputClass":"Defaulted"},"IntLPDReg":{"type":"Float","long":"InteriorLightingPowerDensityRegulated","units":"W/ft2","inputClass":"Defaulted"},"IntLPDNonReg":{"type":"Float","long":"InteriorLightingPowerDensityNonRegulated","units":"W/ft2","inputClass":"Defaulted"},"RecptPwrDens":{"type":"Float","long":"ReceptaclePowerDensity","units":"W/ft2","inputClass":"Defaulted","error":{"min":0,"max":500},"warn":{"min":0.2,"max":40}},"RecptRadFrac":{"type":"Float","long":"ReceptacleRadiationFraction","inputClass":"Defaulted"},"RecptLatFrac":{"type":"Float","long":"ReceptacleLatentFraction","inputClass":"Defaulted"},"RecptLostFrac":{"type":"Float","long":"ReceptacleLostFraction","inputClass":"Defaulted"},"ElecEqpPwrDens":{"type":"Float","long":"ElecEquipmentPowerDensity","units":"W/ft2","inputClass":"Defaulted","error":{"min":0,"max":100},"warn":{"max":20}},"ElecEqpRadFrac":{"type":"Float","long":"ElecEquipmentRadiationFraction","inputClass":"Defaulted"},"ElecEqpLatFrac":{"type":"Float","long":"ElecEquipmentLatentFraction","inputClass":"Defaulted"},"ElecEqpLostFrac":{"type":"Float","long":"ElecEquipmentLostFraction","inputClass":"Defaulted"},"GasEqpPwrDens":{"type":"Float","long":"GasEquipmentPowerDensity","units":"Btu/h-ft2","inputClass":"Defaulted","error":{"min":0,"max":100},"warn":{"max":20}},"GasEqpRadFrac":{"type":"Float","long":"GasEquipmentRadiationFraction","inputClass":"Defaulted"},"GasEqpLatFrac":{"type":"Float","long":"GasEquipmentLatentFraction","inputClass":"Defaulted"},"GasEqpLostFrac":{"type":"Float","long":"GasEquipmentLostFraction","inputClass":"Defaulted"},"ProcElecPwrDens":{"type":"Float","long":"ProcessElectricalPowerDensity","units":"W/ft2","inputClass":"Optional","error":{"min":0,"max":100},"warn":{"max":10}},"ProcElecSchRef":{"type":"ObjectRef","long":"ProcessElectricalScheduleReference","inputClass":"Optional","refs":[{"type":"Sch","filter":["Sch:Type","Fraction"]}]},"ProcElecRadFrac":{"type":"Float","long":"ProcessElectricalRadiationFraction","inputClass":"Optional"},"ProcElecLatFrac":{"type":"Float","long":"ProcessElectricalLatentFraction","inputClass":"Optional"},"ProcElecLostFrac":{"type":"Float","long":"ProcessElectricalLostFraction","inputClass":"Optional"},"ProcGasPwrDens":{"type":"Float","long":"ProcessGasPowerDensity","units":"Btu/h-ft2","inputClass":"Optional","error":{"min":0,"max":100},"warn":{"max":20}},"ProcGasSchRef":{"type":"ObjectRef","long":"ProcessGasScheduleReference","inputClass":"Optional","refs":[{"type":"Sch","filter":["Sch:Type","Fraction"]}]},"ProcGasRadFrac":{"type":"Float","long":"ProcessGasRadiationFraction","inputClass":"Optional"},"ProcGasLatFrac":{"type":"Float","long":"ProcessGasLatentFraction","inputClass":"Optional"},"ProcGasLostFrac":{"type":"Float","long":"ProcessGasLostFraction","inputClass":"Optional"},"ElevCnt":{"type":"Integer","long":"ElevatorCount","units":"ElevMech/Space","inputClass":"Optional","error":{"min":0,"max":50},"warn":{"min":0,"max":10}},"ElevPwr":{"type":"Float","long":"ElevatorPower","units":"W/Elev","inputClass":"Optional","error":{"min":0,"max":50000},"warn":{"min":0,"max":10000}},"EscalCnt":{"type":"Integer","long":"EscalatorCount","units":"Escal/Space","inputClass":"Optional","error":{"min":0,"max":50},"warn":{"min":0,"max":10}},"EscalPwr":{"type":"Float","long":"EscalatorPower","units":"W/Escal","inputClass":"Optional","error":{"min":0,"max":50000},"warn":{"min":0,"max":10000}}},
+    UndgrFlr: {"Status":{"type":"Enumeration","long":"Status","enums":[{"vals":["New","Existing","Altered"],"def":"New"}],"inputClass":"Required"},"ConsAssmRef":{"type":"ObjectRef","long":"ConstructAssemblyReference","inputClass":"Required","refs":[{"type":"ConsAssm","filter":["ConsAssm:CompatibleSurfType","UndergroundFloor"]}]},"Area":{"type":"Float","long":"Area","units":"ft2","inputClass":"Conditional","error":{"min":0.01}}},
+    UndgrWall: {"Status":{"type":"Enumeration","long":"Status","enums":[{"vals":["New","Existing","Altered"],"def":"New"}],"inputClass":"Required"},"ConsAssmRef":{"type":"ObjectRef","long":"ConstructAssemblyReference","inputClass":"Required","refs":[{"type":"ConsAssm","filter":["ConsAssm:CompatibleSurfType","UndergroundWall"]}]},"Area":{"type":"Float","long":"Area","units":"ft2","inputClass":"Conditional","error":{"min":0.01}}},
+    Win: {"Status":{"type":"Enumeration","long":"Status","enums":[{"vals":["New","Altered","Existing"],"def":null}],"inputClass":"Required"},"FenConsRef":{"type":"ObjectRef","long":"FenestrationConstructionReference","inputClass":"Compulsory","refs":[{"type":"FenCons","filter":["FenCons:FenType","VerticalFenestration"]}]},"Area":{"type":"Float","long":"Area","units":"ft2","inputClass":"Conditional","error":{"min":0.01}},"Hgt":{"type":"Float","long":"Height","units":"ft","inputClass":"Conditional","error":{"min":0.0001}},"Wd":{"type":"Float","long":"Width","units":"ft","inputClass":"Conditional","error":{"min":0.0001}}},
+  },
+  2025: {
+    Batt: {"SimStandaloneBatt":{"type":"Integer","long":"SimulateStandaloneBattery","inputClass":"Defaulted"},"MaxCap":{"type":"Float","long":"MaximumCapacity","units":"kWh","inputClass":"Defaulted","error":{"min":0}},"Ctrl":{"type":"Enumeration","long":"Control","enums":[{"vals":["- specify -","Basic","Time of Use","Advanced DR Control"],"def":"Basic","when":[["Proj:EnableResearchMode","1"]]},{"vals":["Time of Use"],"def":"Time of Use","when":[["Batt:AllowStandaloneBatt","1"]]},{"vals":["Basic","Time of Use"],"def":"Basic"}],"inputClass":"Defaulted"},"StandaloneChgStartHr":{"type":"Integer","long":"StandaloneChargeStartHour","inputClass":"Defaulted"},"ChrgEff":{"type":"Float","long":"ChargeEfficiency","units":"frac","inputClass":"Defaulted","error":{"min":0,"max":1}},"DschrgEff":{"type":"Float","long":"DischargeEfficiency","units":"frac","inputClass":"Defaulted","error":{"min":0,"max":1}},"AllowBattRoundTripEff":{"type":"Integer","long":"AllowBatteryRoundTripEfficiency","inputClass":"Defaulted"},"RoundTripEff":{"type":"Float","long":"RoundTripEfficiency","units":"frac","inputClass":"Defaulted","error":{"min":0,"max":1}},"NumRankedDays":{"type":"Integer","long":"NumberRankedDays","inputClass":"Optional","error":{"min":1,"max":365}}},
+    Ceiling: {"Status":{"type":"Enumeration","long":"Status","enums":[{"vals":["New","Existing","Altered"],"def":null}],"inputClass":"Required"},"Area":{"type":"Float","long":"Area","units":"ft2","inputClass":"Conditional","error":{"min":0.01}},"AdjacentSpcRef":{"type":"ObjectRef","long":"AdjacentSpaceReference","inputClass":"Required","refs":[{"type":"Spc"},{"type":"ResZn"},{"type":"ResOtherZn"}]},"ConsAssmRef":{"type":"ObjectRef","long":"ConstructAssemblyReference","inputClass":"Required","refs":[{"type":"ConsAssm","filter":["ConsAssm:CompatibleSurfType","Ceiling"]}]}},
+    ConsAssm: {"CompatibleSurfType":{"type":"Enumeration","long":"CompatibleSurfaceType","enums":[{"vals":["ExteriorWall"],"def":"ExteriorWall","when":[["ConsAssm:AssignedSurfType","1"]]},{"vals":["Roof"],"def":"Roof","when":[["ConsAssm:AssignedSurfType","2"]]},{"vals":["ExteriorFloor"],"def":"ExteriorFloor","when":[["ConsAssm:AssignedSurfType","3"]]},{"vals":["UndergroundWall"],"def":"UndergroundWall","when":[["ConsAssm:AssignedSurfType","4"]]},{"vals":["UndergroundFloor"],"def":"UndergroundFloor","when":[["ConsAssm:AssignedSurfType","5"]]},{"vals":["InteriorWall"],"def":"InteriorWall","when":[["ConsAssm:AssignedSurfType","6"]]},{"vals":["Ceiling"],"def":"Ceiling","when":[["ConsAssm:AssignedSurfType","7"]]},{"vals":["InteriorFloor"],"def":"InteriorFloor","when":[["ConsAssm:AssignedSurfType","8"]]},{"vals":["ExteriorWall","Roof","ExteriorFloor","UndergroundWall","UndergroundFloor","InteriorWall","Ceiling","InteriorFloor"],"def":null}],"inputClass":"Required"},"FireRtdFlag":{"type":"Integer","long":"FireRatedFlag","inputClass":"Defaulted"},"SlabType":{"type":"Enumeration","long":"SlabType","enums":[{"vals":["- specify -","HeatedSlabOnGrade","HeatedSlabBelowGrade","UnheatedSlabOnGrade","UnheatedSlabBelowGrade"],"def":"- specify -"}],"inputClass":"Optional"},"SlabInsOrientation":{"type":"Enumeration","long":"SlabInsulationOrientation","enums":[{"vals":["None","12inHorizontal","24inHorizontal","36inHorizontal","48inHorizontal","12inVertical","24inVertical","36inVertical","48inVertical","HorizontalAndVertical","FullyInsulatedSlab"],"def":"None"}],"inputClass":"Optional"},"SlabInsThrmlR":{"type":"Enumeration","long":"SlabInsulationThermalResistance","enums":[{"vals":["R0"],"def":"R0","when":[["ConsAssm:SlabInsOrientation","None"]]},{"vals":["R0","R5","R7_5","R10","R15"],"def":"R0","when":[["ConsAssm:SlabInsOrientation","12inHorizontal"]]},{"vals":["R0","R5","R7_5","R10","R15"],"def":"R0","when":[["ConsAssm:SlabInsOrientation","24inHorizontal"]]},{"vals":["R0","R5","R7_5","R10","R15"],"def":"R0","when":[["ConsAssm:SlabInsOrientation","36inHorizontal"]]},{"vals":["R0","R5","R7_5","R10","R15"],"def":"R0","when":[["ConsAssm:SlabInsOrientation","48inHorizontal"]]},{"vals":["R0","R5","R7_5","R10","R15","R20","R25","R30"],"def":"R0","when":[["ConsAssm:SlabInsOrientation","12inVertical"]]},{"vals":["R0","R5","R7_5","R10","R15","R20","R25","R30"],"def":"R0","when":[["ConsAssm:SlabInsOrientation","24inVertical"]]},{"vals":["R0","R5","R7_5","R10","R15","R20","R25","R30"],"def":"R0","when":[["ConsAssm:SlabInsOrientation","36inVertical"]]},{"vals":["R0","R5","R7_5","R10","R15","R20","R25","R30"],"def":"R0","when":[["ConsAssm:SlabInsOrientation","48inVertical"]]},{"vals":["R0","R5","R7_5","R10","R15","R20","R25","R30","R35","R40","R45","R50","R55"],"def":"R0","when":[["ConsAssm:SlabInsOrientation","FullyInsulatedSlab"]]},{"vals":["R0","R5","R7_5","R10","R15","R20","R25","R30"],"def":"R0","when":[["ConsAssm:SlabInsOrientation","HorizontalAndVertical"]]}],"inputClass":"Optional"},"FieldAppliedCoating":{"type":"Integer","long":"FieldAppliedCoating","inputClass":"Required"},"CRRCInitialRefl":{"type":"Float","long":"CRRCInitialReflectance","inputClass":"Required","error":{"min":0,"max":1}},"CRRCAgedRefl":{"type":"Float","long":"CRRCAgedReflectance","inputClass":"Optional","error":{"min":0,"max":1}},"CRRCInitialEmit":{"type":"Float","long":"CRRCInitialEmittance","inputClass":"Required","error":{"min":0,"max":1}},"CRRCAgedEmit":{"type":"Float","long":"CRRCAgedEmittance","inputClass":"Required","error":{"min":0,"max":1}},"MatRef":{"type":"ObjectRef","long":"MaterialReference","nVals":10,"inputClass":"Required","refs":[{"type":"Mat"}]},"RoofDens":{"type":"Integer","long":"RoofDensity","inputClass":"Defaulted"},"BuiltUpRoof":{"type":"Integer","long":"BuiltUpRoof","inputClass":"Defaulted"},"BallastedRoof":{"type":"Integer","long":"BallastedRoof","inputClass":"Defaulted"},"CRRCSRI":{"type":"Float","long":"CRRCSolarReflectanceIndex","inputClass":"Optional"}},
+    Dr: {"Status":{"type":"Enumeration","long":"Status","enums":[{"vals":["New","Existing","Altered"],"def":"New"}],"inputClass":"Required"},"DrConsRef":{"type":"ObjectRef","long":"DoorConstructionReference","inputClass":"Optional","refs":[{"type":"DrCons"}]},"Area":{"type":"Float","long":"Area","units":"ft2","inputClass":"Conditional","error":{"min":0.01}},"Hgt":{"type":"Float","long":"Height","units":"ft","inputClass":"Conditional","error":{"min":0.0001}},"Wd":{"type":"Float","long":"Width","units":"ft","inputClass":"Conditional","error":{"min":0.0001}}},
+    DrCons: {"Type":{"type":"Enumeration","long":"Type","enums":[{"vals":["- specify -","MetalInsulatedSingleLayerSectionalDoor","MetalInsulatedSwingingDoor","MetalUninsulatedDoubleLayerDoor","MetalUninsulatedSingleLayerDoor","MetalUninsulatedSingleLayerRollupDoor","WoodLessThan1.75inThickDoor","WoodGreaterThanOrEqualTo1.75inThickDoor"],"def":"- specify -"}],"inputClass":"Required"},"CertificationMthd":{"type":"Enumeration","long":"CertificationMethod","enums":[{"vals":["- specify -","NFRCRated","DefaultPerformance"],"def":"- specify -"}],"inputClass":"Required"},"UFactor":{"type":"Float","long":"UFactor","units":"Btu/h-\u00b0F-ft2","inputClass":"Optional"},"Open":{"type":"Enumeration","long":"Open","enums":[{"vals":["- specify -","Swinging","NonSwinging"],"def":"- specify -"}],"inputClass":"Optional"},"DrAutoCloser":{"type":"Integer","long":"DoorAutomaticCloser","inputClass":"Defaulted"}},
+    ExtFlr: {"Status":{"type":"Enumeration","long":"Status","enums":[{"vals":["New","Existing","Altered"],"def":null}],"inputClass":"Required"},"ConsAssmRef":{"type":"ObjectRef","long":"ConstructAssemblyReference","inputClass":"Required","refs":[{"type":"ConsAssm","filter":["ConsAssm:CompatibleSurfType","ExteriorFloor"]}]},"Area":{"type":"Float","long":"Area","units":"ft2","inputClass":"Conditional","error":{"min":0.01}}},
+    ExtWall: {"Status":{"type":"Enumeration","long":"Status","enums":[{"vals":["New","Existing","Altered"],"def":null}],"inputClass":"Required"},"ConsAssmRef":{"type":"ObjectRef","long":"ConstructAssemblyReference","inputClass":"Required","refs":[{"type":"ConsAssm","filter":["ConsAssm:CompatibleSurfType","ExteriorWall"]}]},"Area":{"type":"Float","long":"Area","units":"ft2","inputClass":"Conditional","error":{"min":0.01}},"Az":{"type":"Float","long":"Azimuth","units":"deg - relative to bldg. azimuth","inputClass":"Conditional","error":{"min":0,"max":360}},"Tilt":{"type":"Float","long":"Tilt","units":"deg","inputClass":"Conditional","error":{"min":0,"max":180}}},
+    FenCons: {"FenType":{"type":"Enumeration","long":"FenestrationType","enums":[{"vals":["VerticalFenestration","Skylight"],"def":null}],"inputClass":"Required"},"FenProdType":{"type":"Enumeration","long":"FenestrationProductType","enums":[{"vals":["- specify -","FixedWindow","OperableWindow","CurtainWall","GlazedDoor"],"def":"- specify -","when":[["FenCons:FenType","VerticalFenestration"]]},{"vals":["- specify -","FixedWindow","OperableWindow"],"def":"- specify -","when":[["FenCons:FenType","Skylight"]]}],"inputClass":"Conditional"},"AssmContext":{"type":"Enumeration","long":"AssemblyContext","enums":[{"vals":["Manufactured","FieldFabricated","SiteBuilt"],"def":"Manufactured","when":[["FenCons:FenType","VerticalFenestration"]]},{"vals":["Manufactured","SiteBuilt"],"def":"Manufactured","when":[["FenCons:FenType","Skylight"]]}],"inputClass":"Conditional"},"CertificationMthd":{"type":"Enumeration","long":"CertificationMethod","enums":[{"vals":["- specify -"],"def":"- specify -","when":[["FenCons:AssmContext","0"],["FenCons:FenType","VerticalFenestration"]]},{"vals":["- specify -","NFRCRated","DefaultPerformance"],"def":"NFRCRated","when":[["FenCons:AssmContext","Manufactured"],["FenCons:FenType","VerticalFenestration"]]},{"vals":["- specify -","DefaultPerformance"],"def":"DefaultPerformance","when":[["FenCons:AssmContext","FieldFabricated"],["FenCons:FenType","VerticalFenestration"]]},{"vals":["- specify -","NFRCRated","DefaultPerformance","COGEquations"],"def":"NFRCRated","when":[["FenCons:AssmContext","SiteBuilt"],["FenCons:FenType","VerticalFenestration"],["FenCons:Status","Existing"]]},{"vals":["- specify -","NFRCRated","DefaultPerformance"],"def":"NFRCRated","when":[["FenCons:AssmContext","SiteBuilt"],["FenCons:FenType","VerticalFenestration"]]},{"vals":["- specify -"],"def":"- specify -","when":[["FenCons:AssmContext","0"],["FenCons:FenType","Skylight"]]},{"vals":["- specify -","NFRCRated","DefaultPerformance","COGEquations"],"def":"NFRCRated","when":[["FenCons:AssmContext","Manufactured"],["FenCons:FenType","Skylight"]]},{"vals":["- specify -","DefaultPerformance","COGEquations"],"def":"DefaultPerformance","when":[["FenCons:AssmContext","FieldFabricated"],["FenCons:FenType","Skylight"]]},{"vals":["- specify -","NFRCRated","DefaultPerformance","COGEquations"],"def":"NFRCRated","when":[["FenCons:AssmContext","SiteBuilt"],["FenCons:FenType","Skylight"]]}],"inputClass":"Required"},"SkyltGlz":{"type":"Enumeration","long":"SkylightGlazing","enums":[{"vals":["- specify -"],"def":"- specify -","when":[["FenCons:FenType","VerticalFenestration"]]},{"vals":["- specify -","Glass","Plastic"],"def":"- specify -","when":[["FenCons:FenType","Skylight"]]}],"inputClass":"Conditional"},"SkyltCurb":{"type":"Enumeration","long":"SkylightCurb","enums":[{"vals":["- specify -"],"def":"- specify -","when":[["FenCons:FenType","VerticalFenestration"]]},{"vals":["- specify -","CurbMounted","DeckMounted"],"def":"- specify -","when":[["FenCons:FenType","Skylight"]]}],"inputClass":"Conditional"},"OperableWinConfiguration":{"type":"Enumeration","long":"OperableWindowConfiguration","enums":[{"vals":["- specify -","CasementAwning","Sliding"],"def":"- specify -"}],"inputClass":"Conditional"},"GreenhouseGardenWin":{"type":"Integer","long":"GreenhouseGardenWindow","inputClass":"Conditional"},"FenFrm":{"type":"Enumeration","long":"FenestrationFraming","enums":[{"vals":["- specify -"],"def":"- specify -","when":[["FenCons:CertificationMthd","- specify -"]]},{"vals":["- specify -"],"def":"- specify -","when":[["FenCons:CertificationMthd","NFRCRated"]]},{"vals":["- specify -","MetalFraming","NonMetalFraming"],"def":"- specify -","when":[["FenCons:AssmContext","FieldFabricated"]]},{"vals":["- specify -","MetalFraming","MetalFramingWithThermalBreak","NonMetalFraming"],"def":"- specify -"}],"inputClass":"Conditional"},"FenPanes":{"type":"Enumeration","long":"FenestrationPanes","enums":[{"vals":["- specify -"],"def":"- specify -","when":[["FenCons:CertificationMthd","- specify -"]]},{"vals":["- specify -"],"def":"- specify -","when":[["FenCons:CertificationMthd","NFRCRated"]]},{"vals":["- specify -","SinglePane","DoublePane","GlassBlock"],"def":"- specify -","when":[["FenCons:FenType","VerticalFenestration"],["FenCons:CertificationMthd","DefaultPerformance"]]},{"vals":["- specify -","SinglePane","DoublePane","TranslucentOrTransparentPanel"],"def":"- specify -","when":[["FenCons:FenType","Skylight"],["FenCons:CertificationMthd","DefaultPerformance"]]},{"vals":["- specify -"],"def":"- specify -","when":[["FenCons:CertificationMthd","3"]]}],"inputClass":"Conditional"},"GlzTint":{"type":"Enumeration","long":"GlazingTint","enums":[{"vals":["- specify -","ClearGlazing","TintedGlazing"],"def":"- specify -"}],"inputClass":"Conditional"},"WinDivider":{"type":"Enumeration","long":"WindowDivider","enums":[{"vals":["- specify -","NoDivider","TrueDividedLite","DividerBtwnPanesLessThan7_16in","DividerBtwnPanesGreaterThanOrEqualTo7_16in"],"def":"- specify -"}],"inputClass":"Conditional"},"Diffusing":{"type":"Integer","long":"Diffusing","inputClass":"Optional"},"SHGC":{"type":"Float","long":"SHGC","units":"frac.","inputClass":"Conditional"},"SHGCCOG":{"type":"Float","long":"SHGCCenterOfGlass","units":"frac.","inputClass":"Conditional"},"UFactor":{"type":"Float","long":"UFactor","units":"Btu/h-\u00b0F-ft2","inputClass":"Conditional","error":{"min":0,"max":2.5},"warn":{"max":2.3}},"UFactorCOG":{"type":"Float","long":"UFactorCenterOfGlass","units":"Btu/h-\u00b0F-ft2","inputClass":"Conditional"},"VT":{"type":"Float","long":"VisibleTransmittance","units":"frac.","inputClass":"Conditional"},"VTCOG":{"type":"Float","long":"VisibleTransmittanceCenterOfGlass","units":"frac.","inputClass":"Conditional"},"ShdgCred":{"type":"Integer","long":"ShadingCredit","inputClass":"Required"},"DynamicGlz":{"type":"Integer","long":"DynamicGlazing","inputClass":"Required"}},
+    IntFlr: {"Status":{"type":"Enumeration","long":"Status","enums":[{"vals":["New","Existing","Altered"],"def":null}],"inputClass":"Required"},"AdjacentSpcRef":{"type":"ObjectRef","long":"AdjacentSpaceReference","inputClass":"Required","refs":[{"type":"Spc"},{"type":"ResZn"},{"type":"ResOtherZn"}]},"ConsAssmRef":{"type":"ObjectRef","long":"ConstructAssemblyReference","inputClass":"Required","refs":[{"type":"ConsAssm","filter":["ConsAssm:CompatibleSurfType","InteriorFloor"]}]},"Area":{"type":"Float","long":"Area","units":"ft2","inputClass":"Conditional","error":{"min":0.01}}},
+    IntLtgSys: {"PwrReg":{"type":"Integer","long":"PowerRegulated","inputClass":"Defaulted"},"NonRegExclusion":{"type":"Enumeration","long":"NonRegulatedExclusion","enums":[{"vals":["- specify -","ThemeParksThemeAndSpecialEffects","FilmOrPhotoStudioLightingSeparatelySwitched","DanceFloorOrTheatrical","TemporaryExhibitSeparatelySwitchedInCivicTransConvOrHotel","ManufacturerInstalledInFreezerVendingFoodPrepScientificOrIndEquip","ExamSurgicalNightOrEquipmentIntegratedInMedicalOrClinical","PlantGrowthOrMaintWithMultiLevelAstroTimer","LightingEquipmentForSale","LightingDemonstrationEquipInLightingEducationFacilities","CBCRequiredExitSign","CBCRequiredExitwayOrEgressNormallyOff","HotelMotelGuestroom","HighRiseResidentialDwellingUnit","TemporaryLightingSystems","SmallAgriculturalBuilding","SmallUnconditionedAgriculturalBuilding","HistoricBuilding","SmallNonresidentialParkingGarage","SignageLighting","ATMLighting","SmallRefrigeratedCases","ElevatorLighting"],"def":"- specify -"}],"inputClass":"Conditional","error":{"min":0}},"LumRef":{"type":"ObjectRef","long":"LuminaireReference","nVals":5,"inputClass":"Optional","refs":[{"type":"Lum"}]},"LumCnt":{"type":"Float","long":"LuminaireCount","nVals":5,"inputClass":"Defaulted","error":{"min":0}},"LumStatus":{"type":"Enumeration","long":"LuminaireStatus","enums":[{"vals":["New","Altered","Existing","Future"],"def":null}],"nVals":5,"inputClass":"Defaulted"}},
+    IntWall: {"Status":{"type":"Enumeration","long":"Status","enums":[{"vals":["New","Existing","Altered"],"def":null}],"inputClass":"Required"},"AdjacentSpcRef":{"type":"ObjectRef","long":"AdjacentSpaceReference","inputClass":"Required","refs":[{"type":"Spc"},{"type":"ResZn"},{"type":"ResOtherZn"}]},"ConsAssmRef":{"type":"ObjectRef","long":"ConstructAssemblyReference","inputClass":"Required","refs":[{"type":"ConsAssm","filter":["ConsAssm:CompatibleSurfType","InteriorWall"]}]},"Area":{"type":"Float","long":"Area","units":"ft2","inputClass":"Conditional","error":{"min":0.01}}},
+    Lum: {"FxtrType":{"type":"Enumeration","long":"FixtureType","enums":[{"vals":["RecessedWithLens","RecessedOrDownlight","NotInCeiling"],"def":null}],"inputClass":"Required"},"LampType":{"type":"Enumeration","long":"LampType","enums":[{"vals":["LinearFluorescent","CFL","Incandescent","LED","MetalHalide","MercuryVapor","HighPressureSodium"],"def":null}],"inputClass":"Required"},"Pwr":{"type":"Float","long":"Power","units":"W","inputClass":"Compulsory","error":{"min":0}},"LumDescRpt":{"type":"String","long":"LuminaireDescriptionReport","inputClass":"Optional"}},
+    PVArray: {"SpecMthd":{"type":"Enumeration","long":"SpecificationMethod","enums":[{"vals":["Simplified","Detailed"],"def":null}],"inputClass":"Defaulted"},"DCSysSize":{"type":"Float","long":"DirectCurrentSystemSize","units":"kW","inputClass":"Defaulted"},"ModuleType":{"type":"Enumeration","long":"ModuleType","enums":[{"vals":["Standard","Premium"],"def":"Standard","when":[["PVArray:SpecMthd","Simplified"]]},{"vals":["Standard","Premium","Thin Film"],"def":"Standard"}],"inputClass":"Defaulted"},"CalFlexibleInstallOpt":{"type":"Enumeration","long":"CaliforniaFlexibleInstallOption","enums":[{"vals":["n/a","CFI1","CFI2"],"def":null}],"inputClass":"Defaulted"},"GeomSpecMthd":{"type":"Enumeration","long":"GeometrySpecificationMethod","enums":[{"vals":["azimuth and tilt"],"def":"azimuth and tilt","when":[["Proj:HavePVGeomObj","0"]]},{"vals":["azimuth and tilt","reference PVArrayGeom object"],"def":"azimuth and tilt"}],"inputClass":"Defaulted"},"LctnSpecMthd":{"type":"Enumeration","long":"LocationSpecificationMethod","enums":[{"vals":["- not specified -","X,Y,Z and height, width"],"def":null}],"inputClass":"Defaulted"},"RefX":{"type":"Float","long":"ReferenceX","units":"ft","inputClass":"Optional"},"RefY":{"type":"Float","long":"ReferenceY","units":"ft","inputClass":"Optional"},"RefZ":{"type":"Float","long":"ReferenceZ","units":"ft","inputClass":"Optional"},"Hgt":{"type":"Float","long":"Height","units":"ft","inputClass":"Optional","error":{"min":0.1}},"Wd":{"type":"Float","long":"Width","units":"ft","inputClass":"Optional","error":{"min":0.1}},"Az":{"type":"Float","long":"Azimuth","units":"deg","inputClass":"Defaulted","error":{"min":0,"max":360}},"TiltInp":{"type":"Enumeration","long":"TiltInput","enums":[{"vals":["deg","pitch"],"def":null}],"inputClass":"Defaulted"},"TiltPitch":{"type":"Float","long":"TiltPitch","units":"x in 12","inputClass":"Optional","error":{"min":0}},"TiltAngle":{"type":"Float","long":"TiltAngle","units":"deg","inputClass":"Optional","error":{"min":0,"max":90}},"ArrayType":{"type":"Enumeration","long":"ArrayType","enums":[{"vals":["Fixed (open rack)","Tracking (one axis)","Tracking (two axis)"],"def":null}],"inputClass":"Defaulted"},"PwrElec":{"type":"Enumeration","long":"Power electronics (microinverters, DC power optimizers)","enums":[{"vals":["- none -","Microinverters","DC Power Optimizers"],"def":"- none -"}],"inputClass":"Defaulted"},"SolarAccess":{"type":"Float","long":"Solar access (100 * incident solar energy given shading, ...","units":"%","inputClass":"Defaulted","error":{"min":0,"max":100}},"InverterEff":{"type":"Float","long":"InverterEfficiency","units":"%","inputClass":"Optional","error":{"min":0,"max":100}}},
+    Roof: {"Status":{"type":"Enumeration","long":"Status","enums":[{"vals":["New","Existing","Altered"],"def":null}],"inputClass":"Required"},"ConsAssmRef":{"type":"ObjectRef","long":"ConstructAssemblyReference","inputClass":"Required","refs":[{"type":"ConsAssm","filter":["ConsAssm:CompatibleSurfType","Roof"]}]},"Area":{"type":"Float","long":"Area","units":"ft2","inputClass":"Conditional","error":{"min":0.01}},"Az":{"type":"Float","long":"Azimuth","units":"deg - relative to bldg. azimuth","inputClass":"Conditional","error":{"min":0,"max":360}},"Tilt":{"type":"Float","long":"Tilt","units":"deg","inputClass":"Conditional","error":{"min":0,"max":180}}},
+    Skylt: {"Status":{"type":"Enumeration","long":"Status","enums":[{"vals":["New","Altered","Existing"],"def":null}],"inputClass":"Required"},"FenConsRef":{"type":"ObjectRef","long":"FenestrationConstructionReference","inputClass":"Compulsory","refs":[{"type":"FenCons","filter":["FenCons:FenType","Skylight"]}]},"Area":{"type":"Float","long":"Area","units":"ft2","inputClass":"Conditional","error":{"min":0.01}}},
+    Spc: {"LtgStatus":{"type":"Enumeration","long":"LightingStatus","enums":[{"vals":["New","Altered","Existing","Future"],"def":null}],"inputClass":"Defaulted"},"IntLPDReg":{"type":"Float","long":"InteriorLightingPowerDensityRegulated","units":"W/ft2","inputClass":"Defaulted"},"IntLPDNonReg":{"type":"Float","long":"InteriorLightingPowerDensityNonRegulated","units":"W/ft2","inputClass":"Defaulted"},"RecptPwrDens":{"type":"Float","long":"ReceptaclePowerDensity","units":"W/ft2","inputClass":"Defaulted","error":{"min":0,"max":500},"warn":{"min":0.2,"max":40}},"RecptRadFrac":{"type":"Float","long":"ReceptacleRadiationFraction","inputClass":"Defaulted"},"RecptLatFrac":{"type":"Float","long":"ReceptacleLatentFraction","inputClass":"Defaulted"},"RecptLostFrac":{"type":"Float","long":"ReceptacleLostFraction","inputClass":"Defaulted"},"ElecEqpPwrDens":{"type":"Float","long":"ElecEquipmentPowerDensity","units":"W/ft2","inputClass":"Defaulted","error":{"min":0,"max":100},"warn":{"max":20}},"ElecEqpRadFrac":{"type":"Float","long":"ElecEquipmentRadiationFraction","inputClass":"Defaulted"},"ElecEqpLatFrac":{"type":"Float","long":"ElecEquipmentLatentFraction","inputClass":"Defaulted"},"ElecEqpLostFrac":{"type":"Float","long":"ElecEquipmentLostFraction","inputClass":"Defaulted"},"GasEqpPwrDens":{"type":"Float","long":"GasEquipmentPowerDensity","units":"Btu/h-ft2","inputClass":"Defaulted","error":{"min":0,"max":100},"warn":{"max":20}},"GasEqpRadFrac":{"type":"Float","long":"GasEquipmentRadiationFraction","inputClass":"Defaulted"},"GasEqpLatFrac":{"type":"Float","long":"GasEquipmentLatentFraction","inputClass":"Defaulted"},"GasEqpLostFrac":{"type":"Float","long":"GasEquipmentLostFraction","inputClass":"Defaulted"},"ProcElecPwrDens":{"type":"Float","long":"ProcessElectricalPowerDensity","units":"W/ft2","inputClass":"Optional","error":{"min":0,"max":100},"warn":{"max":10}},"ProcElecSchRef":{"type":"ObjectRef","long":"ProcessElectricalScheduleReference","inputClass":"Optional","refs":[{"type":"Sch","filter":["Sch:Type","Fraction"]}]},"ProcElecRadFrac":{"type":"Float","long":"ProcessElectricalRadiationFraction","inputClass":"Optional"},"ProcElecLatFrac":{"type":"Float","long":"ProcessElectricalLatentFraction","inputClass":"Optional"},"ProcElecLostFrac":{"type":"Float","long":"ProcessElectricalLostFraction","inputClass":"Optional"},"ProcGasPwrDens":{"type":"Float","long":"ProcessGasPowerDensity","units":"Btu/h-ft2","inputClass":"Optional","error":{"min":0,"max":100},"warn":{"max":20}},"ProcGasSchRef":{"type":"ObjectRef","long":"ProcessGasScheduleReference","inputClass":"Optional","refs":[{"type":"Sch","filter":["Sch:Type","Fraction"]}]},"ProcGasRadFrac":{"type":"Float","long":"ProcessGasRadiationFraction","inputClass":"Optional"},"ProcGasLatFrac":{"type":"Float","long":"ProcessGasLatentFraction","inputClass":"Optional"},"ProcGasLostFrac":{"type":"Float","long":"ProcessGasLostFraction","inputClass":"Optional"},"ElevCnt":{"type":"Integer","long":"ElevatorCount","units":"ElevMech/Space","inputClass":"Optional","error":{"min":0,"max":50},"warn":{"min":0,"max":10}},"ElevPwr":{"type":"Float","long":"ElevatorPower","units":"W/Elev","inputClass":"Optional","error":{"min":0,"max":50000},"warn":{"min":0,"max":10000}},"EscalCnt":{"type":"Integer","long":"EscalatorCount","units":"Escal/Space","inputClass":"Optional","error":{"min":0,"max":50},"warn":{"min":0,"max":10}},"EscalPwr":{"type":"Float","long":"EscalatorPower","units":"W/Escal","inputClass":"Optional","error":{"min":0,"max":50000},"warn":{"min":0,"max":10000}}},
+    UndgrFlr: {"Status":{"type":"Enumeration","long":"Status","enums":[{"vals":["New","Existing","Altered"],"def":"New"}],"inputClass":"Required"},"ConsAssmRef":{"type":"ObjectRef","long":"ConstructAssemblyReference","inputClass":"Required","refs":[{"type":"ConsAssm","filter":["ConsAssm:CompatibleSurfType","UndergroundFloor"]}]},"Area":{"type":"Float","long":"Area","units":"ft2","inputClass":"Conditional","error":{"min":0.01}}},
+    UndgrWall: {"Status":{"type":"Enumeration","long":"Status","enums":[{"vals":["New","Existing","Altered"],"def":"New"}],"inputClass":"Required"},"ConsAssmRef":{"type":"ObjectRef","long":"ConstructAssemblyReference","inputClass":"Required","refs":[{"type":"ConsAssm","filter":["ConsAssm:CompatibleSurfType","UndergroundWall"]}]},"Area":{"type":"Float","long":"Area","units":"ft2","inputClass":"Conditional","error":{"min":0.01}}},
+    Win: {"Status":{"type":"Enumeration","long":"Status","enums":[{"vals":["New","Altered","Existing"],"def":null}],"inputClass":"Required"},"FenConsRef":{"type":"ObjectRef","long":"FenestrationConstructionReference","inputClass":"Compulsory","refs":[{"type":"FenCons","filter":["FenCons:FenType","VerticalFenestration"]}]},"Area":{"type":"Float","long":"Area","units":"ft2","inputClass":"Conditional","error":{"min":0.01}},"Hgt":{"type":"Float","long":"Height","units":"ft","inputClass":"Conditional","error":{"min":0.0001}},"Wd":{"type":"Float","long":"Width","units":"ft","inputClass":"Conditional","error":{"min":0.0001}}},
+  },
+};
+
+/* Appendix 5.4A internal-load defaults -- interior LPD and the plug/process
+   load densities, GENERATED from each year's own App5-4A space-by-space
+   table. See tools/extract_load_defaults.js. RecptPwrDens and GasEqpPwrDens
+   also appear in SPCFUNC_DEFAULTS_54A above, which the occupancy step
+   writes; the extractor's --check cross-checks the two agree. */
+const LOAD_DEFAULTS_54A = {
+  2022: {
+    "Aging Eye/Low-vision (Corridor Area)": {"intLPDReg":0.7,"recptPwrDens":0,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Aging Eye/Low-vision (Dining)": {"intLPDReg":0.8,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0.25},
+    "Aging Eye/Low-vision (Lobby, Main Entry)": {"intLPDReg":0.85,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Aging Eye/Low-vision (Lounge/Waiting Area)": {"intLPDReg":0.8,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Aging Eye/Low-vision (Multipurpose Room)": {"intLPDReg":0.85,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Aging Eye/Low-vision (Religious Worship Area)": {"intLPDReg":1,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Aging Eye/Low-vision (Restroom)": {"intLPDReg":1,"recptPwrDens":0,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Aging Eye/Low-vision (Stairwell)": {"intLPDReg":0.8,"recptPwrDens":0,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Audience Seating Area": {"intLPDReg":0.5,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Auditorium Area": {"intLPDReg":0.7,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Auto Repair / Maintenance Area": {"intLPDReg":0.55,"recptPwrDens":1,"gasEqpPwrDens":0.75064,"commRfrgEPD":0},
+    "Barber, Beauty Salon, Spa Area": {"intLPDReg":0.7,"recptPwrDens":2,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Civic Meeting Place Area": {"intLPDReg":0.9,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Classroom, Lecture, Training, Vocational Areas": {"intLPDReg":0.6,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Computer Room": {"intLPDReg":0.5,"recptPwrDens":0,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Concourse and Atria Area": {"intLPDReg":0.6,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Convention, Conference, Multipurpose and Meeting Area": {"intLPDReg":0.75,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Copy Room": {"intLPDReg":0.5,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Corridor Area": {"intLPDReg":0.4,"recptPwrDens":0,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Dining Area (Bar/Lounge and Fine Dining)": {"intLPDReg":0.45,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Dining Area (Cafeteria/Fast Food)": {"intLPDReg":0.45,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0.25},
+    "Dining Area (Family and Leisure)": {"intLPDReg":0.4,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0.25},
+    "Electrical, Mechanical, Telephone Rooms": {"intLPDReg":0.4,"recptPwrDens":3,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Exercise/Fitness Center and Gymnasium Areas": {"intLPDReg":0.5,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Financial Transaction Area": {"intLPDReg":0.7,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Healthcare Facility and Hospitals (Exam/Treatment Room)": {"intLPDReg":1.15,"recptPwrDens":1.5,"gasEqpPwrDens":1.12596,"commRfrgEPD":0},
+    "Healthcare Facility and Hospitals (Imaging Room)": {"intLPDReg":0.6,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Healthcare Facility and Hospitals (Medical Supply Room)": {"intLPDReg":0.55,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Healthcare Facility and Hospitals (Nursery)": {"intLPDReg":0.8,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Healthcare Facility and Hospitals (Nurse's Station)": {"intLPDReg":0.85,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Healthcare Facility and Hospitals (Operating Room)": {"intLPDReg":1.9,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Healthcare Facility and Hospitals (Patient Room)": {"intLPDReg":0.7,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Healthcare Facility and Hospitals (Physical Therapy Room)": {"intLPDReg":0.75,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Healthcare Facility and Hospitals (Recovery Room)": {"intLPDReg":0.9,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "High-Rise Residential Living Spaces": {"recptPwrDens":0.5,"gasEqpPwrDens":0.6824,"commRfrgEPD":0},
+    "Hotel Function Area": {"intLPDReg":0.85,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Hotel/Motel Guest Room": {"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Kitchen/Food Preparation Area": {"intLPDReg":0.95,"recptPwrDens":1.5,"gasEqpPwrDens":17.53768,"commRfrgEPD":1.12},
+    "Kitchenette or Residential Kitchen": {"intLPDReg":0.95,"recptPwrDens":1,"gasEqpPwrDens":3,"commRfrgEPD":0.5},
+    "Laboratory, Scientific": {"intLPDReg":0.9,"recptPwrDens":2,"gasEqpPwrDens":12.69264,"commRfrgEPD":0.28},
+    "Laundry Area": {"intLPDReg":0.45,"recptPwrDens":3,"gasEqpPwrDens":0.75064,"commRfrgEPD":0},
+    "Library (Reading Area)": {"intLPDReg":0.8,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Library (Stacks Area)": {"intLPDReg":1,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Lobby, Main Entry": {"intLPDReg":0.7,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Locker Room": {"intLPDReg":0.45,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Lounge, Breakroom, or Waiting Area": {"intLPDReg":0.55,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Manufacturing, Commercial & Industrial Work Area (Low Bay)": {"intLPDReg":0.6,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Manufacturing, Commercial & Industrial Work Area (High Bay)": {"intLPDReg":0.65,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Manufacturing, Commercial & Industrial Work Area (Precision)": {"intLPDReg":0.85,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Museum Area (Exhibition/Display)": {"intLPDReg":0.6,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Museum Area (Restoration Room)": {"intLPDReg":0.7,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Office Area (>250 square feet)": {"intLPDReg":0.6,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Office Area (<250 square feet)": {"intLPDReg":0.65,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Parking Garage Area (Parking Zone and Ramps)": {"intLPDReg":0.1,"recptPwrDens":0,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Parking Garage Area (Daylight Adaptation Zones)": {"intLPDReg":1,"recptPwrDens":0,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Pharmacy Area": {"intLPDReg":1,"recptPwrDens":5,"gasEqpPwrDens":0,"commRfrgEPD":1},
+    "Retail Sales Area (Grocery Sales)": {"intLPDReg":1,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":5},
+    "Retail Sales Area (Retail Merchandise Sales)": {"intLPDReg":0.95,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Retail Sales Area (Fitting Room)": {"intLPDReg":0.6,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Religious Worship Area": {"intLPDReg":0.95,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Restrooms": {"intLPDReg":0.65,"recptPwrDens":0,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Stairwell": {"intLPDReg":0.6,"recptPwrDens":0,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Storage, Commercial/Industrial (Warehouse)": {"intLPDReg":0.4,"recptPwrDens":0.2,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Storage, Commercial/Industrial (Refrigerated)": {"intLPDReg":0.4,"recptPwrDens":0.2,"gasEqpPwrDens":0,"commRfrgEPD":10},
+    "Storage, Commercial/Industrial (Shipping & Handling)": {"intLPDReg":0.6,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Storage, General": {"intLPDReg":0.4,"recptPwrDens":0.2,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Sports Arena - Playing Area (> 5,000 Spectators)": {"intLPDReg":2.25,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Sports Arena - Playing Area (2,000 - 5,000 Spectators)": {"intLPDReg":1.45,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Sports Arena - Playing Area (< 2,000 Spectators)": {"intLPDReg":1.1,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Sports Arena - Playing Area (Recreational)": {"intLPDReg":0.75,"recptPwrDens":0.2,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Theater Area (Motion Picture)": {"intLPDReg":0.5,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Theater Area (Performance)": {"intLPDReg":0.8,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Transportation Function (Baggage Area)": {"intLPDReg":0.4,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Transportation Function (Ticketing Area)": {"intLPDReg":0.45,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Unleased Tenant Area": {"intLPDReg":0.6,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Unoccupied-Exclude from Gross Floor Area": {"intLPDReg":0,"recptPwrDens":0,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Unoccupied-Include in Gross Floor Area": {"intLPDReg":0,"recptPwrDens":0,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Videoconferencing Studio": {"intLPDReg":0.9,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "All other": {"intLPDReg":0.4,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Conference, Multipurpose and Meeting Area": {"intLPDReg":0.75,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Storage": {"intLPDReg":0.45,"recptPwrDens":0.2,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Health Care / Assisted Living (Nurse's Station)": {"intLPDReg":0.75,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Health Care / Assisted Living (Physical Therapy Room)": {"intLPDReg":0.85,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+  },
+  2025: {
+    "Aging Eye/Low-vision (Corridor Area)": {"intLPDReg":0.7,"recptPwrDens":0,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Aging Eye/Low-vision (Dining)": {"intLPDReg":0.8,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0.25},
+    "Aging Eye/Low-vision (Lobby, Main Entry)": {"intLPDReg":0.85,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Aging Eye/Low-vision (Lounge/Waiting Area)": {"intLPDReg":0.8,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Aging Eye/Low-vision (Multipurpose Room)": {"intLPDReg":0.85,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Aging Eye/Low-vision (Religious Worship Area)": {"intLPDReg":1,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Aging Eye/Low-vision (Restroom)": {"intLPDReg":1,"recptPwrDens":0,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Aging Eye/Low-vision (Stairwell)": {"intLPDReg":0.8,"recptPwrDens":0,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Audience Seating Area": {"intLPDReg":0.5,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Auditorium Area": {"intLPDReg":0.7,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Auto Repair / Maintenance Area": {"intLPDReg":0.55,"recptPwrDens":1,"gasEqpPwrDens":0.75064,"commRfrgEPD":0},
+    "Barber, Beauty Salon, Spa Area": {"intLPDReg":0.7,"recptPwrDens":2,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Civic Meeting Place Area": {"intLPDReg":0.9,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Classroom, Lecture, Training, Vocational Areas": {"intLPDReg":0.6,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Computer Room": {"intLPDReg":0.5,"recptPwrDens":0,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Concourse and Atria Area": {"intLPDReg":0.6,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Convention, Conference, Multipurpose and Meeting Area": {"intLPDReg":0.75,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Copy Room": {"intLPDReg":0.5,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Corridor Area": {"intLPDReg":0.4,"recptPwrDens":0,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Dining Area (Bar/Lounge and Fine Dining)": {"intLPDReg":0.45,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Dining Area (Cafeteria/Fast Food)": {"intLPDReg":0.45,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0.25},
+    "Dining Area (Family and Leisure)": {"intLPDReg":0.4,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0.25},
+    "Electrical, Mechanical, Telephone Rooms": {"intLPDReg":0.4,"recptPwrDens":3,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Exercise/Fitness Center and Gymnasium Areas": {"intLPDReg":0.5,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Financial Transaction Area": {"intLPDReg":0.7,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Healthcare Facility and Hospitals (Exam/Treatment Room)": {"intLPDReg":1.15,"recptPwrDens":1.5,"gasEqpPwrDens":1.12596,"commRfrgEPD":0},
+    "Healthcare Facility and Hospitals (Imaging Room)": {"intLPDReg":0.6,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Healthcare Facility and Hospitals (Medical Supply Room)": {"intLPDReg":0.55,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Healthcare Facility and Hospitals (Nursery)": {"intLPDReg":0.8,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Healthcare Facility and Hospitals (Nurse's Station)": {"intLPDReg":0.85,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Healthcare Facility and Hospitals (Operating Room)": {"intLPDReg":1.9,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Healthcare Facility and Hospitals (Patient Room)": {"intLPDReg":0.7,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Healthcare Facility and Hospitals (Physical Therapy Room)": {"intLPDReg":0.75,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Healthcare Facility and Hospitals (Recovery Room)": {"intLPDReg":0.9,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "High-Rise Residential Living Spaces": {"recptPwrDens":0.5,"gasEqpPwrDens":0.6824,"commRfrgEPD":0},
+    "Hotel Function Area": {"intLPDReg":0.85,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Hotel/Motel Guest Room": {"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Kitchen/Food Preparation Area": {"intLPDReg":0.95,"recptPwrDens":1.5,"gasEqpPwrDens":17.53768,"commRfrgEPD":1.12},
+    "Kitchenette or Residential Kitchen": {"intLPDReg":0.95,"recptPwrDens":1,"gasEqpPwrDens":3,"commRfrgEPD":0.5},
+    "Laboratory, Scientific": {"intLPDReg":0.9,"recptPwrDens":2,"gasEqpPwrDens":12.69264,"commRfrgEPD":0.28},
+    "Laundry Area": {"intLPDReg":0.45,"recptPwrDens":3,"gasEqpPwrDens":0.75064,"commRfrgEPD":0},
+    "Library (Reading Area)": {"intLPDReg":0.8,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Library (Stacks Area)": {"intLPDReg":1,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Lobby, Main Entry": {"intLPDReg":0.7,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Locker Room": {"intLPDReg":0.45,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Lounge, Breakroom, or Waiting Area": {"intLPDReg":0.55,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Manufacturing, Commercial & Industrial Work Area (Low Bay)": {"intLPDReg":0.6,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Manufacturing, Commercial & Industrial Work Area (High Bay)": {"intLPDReg":0.65,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Manufacturing, Commercial & Industrial Work Area (Precision)": {"intLPDReg":0.85,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Museum Area (Exhibition/Display)": {"intLPDReg":0.6,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Museum Area (Restoration Room)": {"intLPDReg":0.7,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Office Area (>250 square feet)": {"intLPDReg":0.6,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Office Area (<=250 square feet)": {"intLPDReg":0.65,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Parking Garage Area (Parking Zone and Ramps)": {"intLPDReg":0.1,"recptPwrDens":0,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Parking Garage Area (Daylight Adaptation Zones)": {"intLPDReg":1,"recptPwrDens":0,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Pharmacy Area": {"intLPDReg":1,"recptPwrDens":5,"gasEqpPwrDens":0,"commRfrgEPD":1},
+    "Retail Sales Area (Grocery Sales)": {"intLPDReg":1,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":5},
+    "Retail Sales Area (Retail Merchandise Sales)": {"intLPDReg":0.95,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Retail Sales Area (Fitting Room)": {"intLPDReg":0.6,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Religious Worship Area": {"intLPDReg":0.95,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Restrooms": {"intLPDReg":0.65,"recptPwrDens":0,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Stairwell": {"intLPDReg":0.6,"recptPwrDens":0,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Storage, Commercial/Industrial (Warehouse)": {"intLPDReg":0.4,"recptPwrDens":0.2,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Storage, Commercial/Industrial (Refrigerated)": {"intLPDReg":0.4,"recptPwrDens":0.2,"gasEqpPwrDens":0,"commRfrgEPD":10},
+    "Storage, Commercial/Industrial (Shipping & Handling)": {"intLPDReg":0.6,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Storage, General": {"intLPDReg":0.4,"recptPwrDens":0.2,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Sports Arena - Playing Area (> 5,000 Spectators)": {"intLPDReg":2.25,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Sports Arena - Playing Area (2,000 - 5,000 Spectators)": {"intLPDReg":1.45,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Sports Arena - Playing Area (< 2,000 Spectators)": {"intLPDReg":1.1,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Sports Arena - Playing Area (Recreational)": {"intLPDReg":0.75,"recptPwrDens":0.2,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Theater Area (Motion Picture)": {"intLPDReg":0.5,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Theater Area (Performance)": {"intLPDReg":0.8,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Transportation Function (Baggage Area)": {"intLPDReg":0.4,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Transportation Function (Ticketing Area)": {"intLPDReg":0.45,"recptPwrDens":0.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Unleased Tenant Area": {"intLPDReg":0.6,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Unoccupied-Exclude from Gross Floor Area": {"intLPDReg":0,"recptPwrDens":0,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Unoccupied-Include in Gross Floor Area": {"intLPDReg":0,"recptPwrDens":0,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Videoconferencing Studio": {"intLPDReg":0.9,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "All other": {"intLPDReg":0.4,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Conference, Multipurpose and Meeting Area": {"intLPDReg":0.75,"recptPwrDens":1,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Storage": {"intLPDReg":0.4,"recptPwrDens":0.2,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Health Care / Assisted Living (Nurse's Station)": {"intLPDReg":0.85,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+    "Health Care / Assisted Living (Physical Therapy Room)": {"intLPDReg":0.75,"recptPwrDens":1.5,"gasEqpPwrDens":0,"commRfrgEPD":0},
+  },
+};
+
+// Enum LISTS fall back to FALLBACK_CODE_YEAR when the file's cycle has no model of
+// its own, and the step says so -- same degradation as the occupancy vocabulary.
+// Numeric DEFAULTS never fall back; see getLoadDefaults().
+function hasFieldModel(){ return !!FIELD_MODEL[getCodeYear()]; }
+function fieldModelYear(){ return hasFieldModel() ? getCodeYear() : FALLBACK_CODE_YEAR; }
+function fieldMeta(objType, prop){
+  const y = FIELD_MODEL[fieldModelYear()];
+  const o = y && y[objType];
+  return (o && o[prop]) || null;
+}
+// Null, not another cycle's numbers, when this code year has no 5.4A table.
+function getLoadDefaults(){ return LOAD_DEFAULTS_54A[getCodeYear()] || null; }
+function loadDefaultsFor(spcFunc){ const t = getLoadDefaults(); return (t && t[spcFunc]) || null; }
+
+// Resolve one side of a ruleset condition like "FenCons:FenType" or "Proj:GasType".
+// A condition naming another object reads the file's first record of that type,
+// which is right for the singletons the conditions actually name (Proj, Batt).
+function fieldCondValue(rec, ref){
+  const parts = ref.split(":");
+  const objType = parts.length > 1 ? parts[0] : rec.type;
+  const prop    = parts.length > 1 ? parts[1] : parts[0];
+  if(objType === rec.type) return rec.attrs[prop];
+  const other = doc && doc.records.find(r => r.type === objType);
+  return other ? other.attrs[prop] : undefined;
+}
+
+// The enum branch that applies to this record right now. Branches are kept
+// separate by the generator precisely so this narrowing is possible: a
+// FenCons's CertificationMthd options depend on its AssmContext and FenType.
+// Falls back to the ruleset's own else-branch, never to a union of all of them.
+function fieldEnum(rec, prop){
+  const meta = fieldMeta(rec.type, prop);
+  if(!meta || !meta.enums) return null;
+  let elseBranch = null;
+  for(const b of meta.enums){
+    if(!b.when){ elseBranch = b; continue; }
+    if(b.when.every(t => String(fieldCondValue(rec, t[0])) === String(t[1]))) return b;
   }
-  const missingRef = surfaces.filter(s =>
-    FEN_TYPES.has(s.type) ? !s.attrs.FenConsRef : !s.attrs.ConsAssmRef
-  ).length;
-  html += `<div style="margin-bottom:12px;font-size:12px;color:var(--text-dim);">${surfaces.length} surface records`;
-  if(missingRef) html += ` &mdash; <span style="color:var(--edited);">${missingRef} missing construction ref</span>`;
-  html += `.</div>`;
-  html += `<table class="wf-table"><thead><tr>
-    <th>Type</th><th>Name</th><th>Construction ref</th><th>Detail</th><th>Area (ft²)</th>
-  </tr></thead><tbody>`;
-  for(const s of surfaces){
-    const isFen = FEN_TYPES.has(s.type);
-    const ref   = isFen ? s.attrs.FenConsRef : s.attrs.ConsAssmRef;
-    const hasRef = !!ref;
-    // For fenestration, look up UFactor/SHGC from the FenCons record
-    let detail = '';
-    if(isFen && ref){
-      const fenRec = doc.records.find(r => r.type === "FenCons" && r.name === ref);
-      if(fenRec){
-        const parts = [];
-        if(fenRec.attrs.UFactor != null) parts.push(`U-${fenRec.attrs.UFactor}`);
-        if(fenRec.attrs.SHGC    != null) parts.push(`SHGC ${fenRec.attrs.SHGC}`);
-        if(fenRec.attrs.VT      != null) parts.push(`VT ${fenRec.attrs.VT}`);
-        detail = parts.join(' / ');
+  return elseBranch || meta.enums[meta.enums.length - 1];
+}
+function fieldEnumVals(rec, prop){ const b = fieldEnum(rec, prop); return b ? b.vals : []; }
+function fieldEnumDefault(rec, prop){ const b = fieldEnum(rec, prop); return b ? b.def : null; }
+
+// "outside the ruleset's Error band" vs "outside its Warning band" -- CBECC's own
+// two levels, read from the model rather than assumed.
+function fieldCheck(rec, prop, value){
+  const meta = fieldMeta(rec.type, prop);
+  if(!meta || value === undefined || value === null || value === "" || !isFinite(value)) return null;
+  const v = Number(value);
+  const out = (band) => band && ((band.min !== undefined && v < band.min) || (band.max !== undefined && v > band.max));
+  if(out(meta.error)) return {level: "error", band: meta.error};
+  if(out(meta.warn))  return {level: "warn",  band: meta.warn};
+  return null;
+}
+function bandText(band){
+  if(!band) return "";
+  if(band.min !== undefined && band.max !== undefined) return band.min + " to " + band.max;
+  if(band.min !== undefined) return "≥ " + band.min;
+  return "≤ " + band.max;
+}
+// Tooltip for any field control: what the ruleset calls it, its units, its input
+// class and its bands. Everything here is generated, so it can't drift from CBECC.
+function fieldTitle(objType, prop){
+  const meta = fieldMeta(objType, prop);
+  if(!meta) return objType + ":" + prop;
+  let t = objType + ":" + prop + " — " + meta.long;
+  if(meta.units) t += " (" + meta.units + ")";
+  t += "\n" + (meta.inputClass === "Conditional"
+    ? "Conditionally required — the ruleset spells the condition out in prose"
+    : meta.inputClass + " input");
+  if(meta.error) t += "\nError unless " + bandText(meta.error);
+  if(meta.warn)  t += "\nWarning unless " + bandText(meta.warn);
+  return t;
+}
+function fieldLabel(objType, prop){
+  const meta = fieldMeta(objType, prop);
+  return prop + (meta && meta.units ? " (" + meta.units + ")" : "");
+}
+
+// True when the ruleset on screen actually has this field. A prop CBECC does not offer
+// for this cycle must not be rendered as an empty picker -- Ceiling:Status is a real
+// case, an input in T24-2025 and absent from T24-2022.
+function fieldExists(objType, prop){ return !!fieldMeta(objType, prop); }
+function wfAbsentField(objType, prop){
+  const el = document.createElement('span');
+  el.style.cssText = "font-size:10.5px;color:var(--ink-faint);white-space:nowrap;";
+  el.textContent = "n/a in T24-" + fieldModelYear();
+  el.title = objType + ":" + prop + " is not an input in T24-" + fieldModelYear() +
+    "s data model, so this step does not offer it.";
+  return el;
+}
+
+/* ---- Shared field controls -------------------------------------------------
+   Every editable cell in the four steps below is one of these three, so the
+   validation band, the units tooltip and the dirty-marking are identical
+   everywhere and come from the same generated source.
+--------------------------------------------------------------------------- */
+
+// Blank clears the attribute rather than writing 0. For a Defaulted input that
+// hands the field back to CBECC's own default; writing 0 would instead assert
+// "this really is zero", which is a different statement about the building.
+function wfNumberInput(rec, prop, onChange, opts){
+  opts = opts || {};
+  if(!fieldExists(rec.type, prop)) return wfAbsentField(rec.type, prop);
+  const meta = fieldMeta(rec.type, prop);
+  const inp = document.createElement('input');
+  inp.className = "wf-num";
+  inp.type = "number";
+  inp.step = opts.step || "any";
+  if(meta.error && meta.error.min !== undefined) inp.min = meta.error.min;
+  if(meta.error && meta.error.max !== undefined) inp.max = meta.error.max;
+  if(opts.width) inp.style.width = opts.width;
+  const cur = rec.attrs[prop];
+  inp.value = (cur === undefined || cur === null || typeof cur === "object") ? "" : cur;
+  inp.title = fieldTitle(rec.type, prop);
+  const flag = fieldCheck(rec, prop, cur);
+  if(flag){
+    inp.classList.add(flag.level === "error" ? "wf-bad" : "wf-warn");
+    inp.title += "\n⚠ current value is outside that band";
+  }
+  inp.addEventListener('change', () => {
+    if(inp.value === "") deletePlainAttr(rec, prop);
+    else setPlainAttr(rec, prop, parseFloat(inp.value));
+    dirtyRecords.add(rec);
+    updateStatus();
+    if(onChange) onChange();
+  });
+  return inp;
+}
+
+// The ruleset's 0/1 Integer flags. Rendered as a checkbox only where the step
+// knows the field is a flag -- the model types them as plain Integers, so this
+// is never inferred from the datatype.
+function wfFlagInput(rec, prop, onChange){
+  if(!fieldExists(rec.type, prop)) return wfAbsentField(rec.type, prop);
+  const inp = document.createElement('input');
+  inp.type = "checkbox";
+  inp.checked = !!rec.attrs[prop];
+  inp.title = fieldTitle(rec.type, prop);
+  inp.addEventListener('change', () => {
+    setPlainAttr(rec, prop, inp.checked ? 1 : 0);
+    dirtyRecords.add(rec);
+    updateStatus();
+    if(onChange) onChange();
+  });
+  return inp;
+}
+
+// Enumerations. A value that isn't in the branch the ruleset offers right now is
+// flagged and preserved, never silently replaced -- the same rule the HVAC step
+// follows for an unrecognised system Type.
+function wfEnumInput(rec, prop, onChange, opts){
+  opts = opts || {};
+  if(!fieldExists(rec.type, prop)) return wfAbsentField(rec.type, prop);
+  const cur = rec.attrs[prop];
+  const vals = fieldEnumVals(rec, prop);
+  const isKnown = cur === undefined || vals.indexOf(cur) !== -1;
+  const combo = createWfCombo(
+    cur === undefined ? null : cur,
+    cur !== undefined && !isKnown,
+    opts.placeholder || "— not set —",
+    () => fieldEnumVals(rec, prop),
+    () => (cur !== undefined && !isKnown) ? cur : null,
+    (val) => {
+      if(val === null || val === undefined) deletePlainAttr(rec, prop);
+      else setPlainAttr(rec, prop, val);
+      dirtyRecords.add(rec);
+      updateStatus();
+      if(onChange) onChange();
+    }
+  );
+  const input = combo.querySelector('input');
+  if(input) input.title = fieldTitle(rec.type, prop) +
+    (isKnown ? "" : "\n⚠ not in the option set this ruleset offers here");
+  if(opts.width && input) input.style.width = opts.width;
+  return combo;
+}
+
+// ObjectRef fields. Candidates are the records of the target type, narrowed by
+// the ruleset's own filter where it declares one (Win:FenConsRef only accepts a
+// FenCons whose FenType is VerticalFenestration).
+function refCandidates(objType, prop){
+  if(!doc) return [];
+  const meta = fieldMeta(objType, prop);
+  const refs = (meta && meta.refs) || [];
+  const out = [];
+  for(const ref of refs){
+    for(const r of doc.records){
+      if(r.type !== ref.type) continue;
+      if(ref.filter){
+        const key = ref.filter[0].split(":")[1];
+        if(String(r.attrs[key]) !== String(ref.filter[1])) continue;
+      }
+      out.push(r.name);
+    }
+  }
+  return out;
+}
+function wfRefInput(rec, prop, onChange, opts){
+  opts = opts || {};
+  if(!fieldExists(rec.type, prop)) return wfAbsentField(rec.type, prop);
+  const cur = rec.attrs[prop];
+  const cands = refCandidates(rec.type, prop);
+  const isKnown = cur === undefined || cands.indexOf(cur) !== -1;
+  const combo = createWfCombo(
+    cur === undefined ? null : cur,
+    cur !== undefined && !isKnown,
+    opts.placeholder || "— none —",
+    () => refCandidates(rec.type, prop),
+    () => (cur !== undefined && !isKnown) ? cur : null,
+    (val) => {
+      if(val === null || val === undefined) deletePlainAttr(rec, prop);
+      else setPlainAttr(rec, prop, val);
+      dirtyRecords.add(rec);
+      updateStatus();
+      if(onChange) onChange();
+    }
+  );
+  const input = combo.querySelector('input');
+  if(input){
+    input.title = fieldTitle(rec.type, prop) +
+      (isKnown ? "" : "\n⚠ no record of that name matches what this field accepts");
+    if(opts.width) input.style.width = opts.width;
+  }
+  return combo;
+}
+
+/* ---- Small shared layout helpers ---------------------------------------- */
+function wfSectionTitle(text){
+  const el = document.createElement('div');
+  el.style.cssText = "font-family:var(--mono);font-size:10.5px;letter-spacing:0.05em;" +
+    "text-transform:uppercase;color:var(--ink-faint);margin:22px 0 8px 0;";
+  el.textContent = text;
+  return el;
+}
+function wfNote(html, kind){
+  const el = document.createElement('div');
+  if(kind === "warn"){ el.className = "warn-line"; el.style.margin = "0 0 12px 0"; }
+  else el.style.cssText = "font-size:11.5px;color:var(--text-dim);line-height:1.6;margin:0 0 12px 0;";
+  el.innerHTML = html;
+  return el;
+}
+function wfScrollTable(table, maxHeight){
+  const wrap = document.createElement('div');
+  wrap.style.cssText = "overflow-x:auto;max-height:" + (maxHeight || "55vh") + ";overflow-y:auto;position:relative;";
+  wrap.appendChild(table);
+  return wrap;
+}
+function wfTable(headers){
+  const table = document.createElement('table');
+  table.className = "wf-table";
+  const thead = document.createElement('thead');
+  const tr = document.createElement('tr');
+  headers.forEach(h => { const th = document.createElement('th'); th.innerHTML = h; tr.appendChild(th); });
+  thead.appendChild(tr);
+  table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  table.appendChild(tbody);
+  table.__body = tbody;
+  return table;
+}
+function wfCell(tr, html, css){
+  const td = document.createElement('td');
+  if(css) td.style.cssText = css;
+  if(html instanceof Node) td.appendChild(html); else td.innerHTML = html;
+  tr.appendChild(td);
+  return td;
+}
+function wfBtn(label, onClick, primary){
+  const b = document.createElement('button');
+  b.className = "btn" + (primary ? " primary" : "");
+  b.textContent = label;
+  b.addEventListener('click', onClick);
+  return b;
+}
+function fmtNum(v, dp){
+  if(v === undefined || v === null || !isFinite(v)) return "—";
+  return Number(v).toFixed(dp === undefined ? 2 : dp);
+}
+// For a ruleset value offered as a default, where rounding would misrepresent it: a
+// Computer Room receptacle density is 20.001 precisely because the Standard defines the
+// category as above 20 W/ft2, and a button reading "20.00" says the opposite.
+function fmtExact(v){
+  if(v === undefined || v === null || !isFinite(v)) return "—";
+  return String(Number(Number(v).toFixed(6)));
+}
+// Notice shown by every step whose vocabulary had to be borrowed from another cycle.
+function wfFieldModelNotice(){
+  if(hasFieldModel()) return null;
+  return wfNote("<strong>T24-" + getCodeYear() + " partial support:</strong> this build has no " +
+    "input model for T24-" + getCodeYear() + ", so the option sets and validation bands below are " +
+    "T24-" + FALLBACK_CODE_YEAR + "'s. Check any value against the ruleset before relying on it. " +
+    "Numeric defaults are not offered at all for this cycle.", "warn");
+}
+
+/* ---- Geometry ------------------------------------------------------------
+   Surface polygons are 3D, so the plan-view shoelace used for floor areas
+   returns zero for a wall. Newell's method gives both the area and the
+   outward normal (hence the orientation) for any planar polygon.
+------------------------------------------------------------------------- */
+function polyNewell(points){
+  let nx = 0, ny = 0, nz = 0;
+  const n = points.length;
+  for(let i = 0; i < n; i++){
+    const a = points[i], b = points[(i + 1) % n];
+    if(!a || !b || a.length < 3 || b.length < 3) return null;
+    nx += (a[1] - b[1]) * (a[2] + b[2]);
+    ny += (a[2] - b[2]) * (a[0] + b[0]);
+    nz += (a[0] - b[0]) * (a[1] + b[1]);
+  }
+  return [nx / 2, ny / 2, nz / 2];
+}
+function polyArea3D(points){
+  if(!points || points.length < 3) return null;
+  const v = polyNewell(points);
+  if(!v) return null;
+  return Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+}
+// Degrees clockwise from +Y, matching CBECC's azimuth convention (0 = north).
+// This is the azimuth in the model's own coordinates; Bldg:BldgAz then rotates
+// the whole building, which is why the envelope step reports both.
+function polyAzimuth(points){
+  const v = polyNewell(points);
+  if(!v) return null;
+  const horiz = Math.sqrt(v[0] * v[0] + v[1] * v[1]);
+  if(horiz < 1e-9) return null;           // horizontal surface: no azimuth
+  let az = Math.atan2(v[0], v[1]) * 180 / Math.PI;
+  return (az + 360) % 360;
+}
+const ORIENTATIONS = ["North", "East", "South", "West"];
+function azToOrientation(az){
+  if(az === null || az === undefined) return null;
+  if(az >= 315 || az < 45) return "North";
+  if(az < 135) return "East";
+  if(az < 225) return "South";
+  return "West";
+}
+
+// buildHierarchy() attaches a copy of each surface's coordinates to the surface
+// record for rendering, but WWR editing has to move the actual CartesianPt
+// records. This walks the flat record list the same way and hands back those
+// records, so a geometry edit and the 3D view can never disagree about which
+// points belong to which surface.
+function geomPointRecords(doc){
+  const map = new Map();
+  let owner = null, collecting = false;
+  for(const r of doc.records){
+    if(r.type === "Spc"){ owner = null; collecting = false; }
+    else if(SURFACE_TYPES.has(r.type)){ owner = r; collecting = false; }
+    else if(OPENING_TYPES.has(r.type) || r.type === "Skylt"){ owner = r; collecting = false; }
+    else if(r.type === "PolyLp"){ if(owner){ collecting = true; map.set(owner, []); } }
+    else if(r.type === "CartesianPt"){ if(owner && collecting && r.attrs.Coord) map.get(owner).push(r); }
+  }
+  return map;
+}
+
+/* =======================================================================
+   STEP: ENVELOPE
+   Four panels, in the order the work actually happens:
+     1. Fenestration constructions (FenCons) -- U-factor, SHGC, VT and the
+        certification/framing enums. This is where a glazing U-factor is
+        edited; the surfaces themselves only point at a construction.
+     2. Opaque assemblies (ConsAssm) -- layer stack, cool-roof properties,
+        and which surface type the assembly may be assigned to.
+     3. Surface assignments -- every surface's ConsAssmRef / FenConsRef,
+        narrowed to the constructions the ruleset lets it accept.
+     4. Window-to-wall ratio by orientation, with a target that rescales
+        the window polygons.
+
+   ConsAssm has no U-factor input. CBECC computes the assembly U-factor
+   from the Mat layer stack (ConstructAssembly.rule), so the honest lever
+   here is the layer list, not a U-value box -- writing one would be
+   writing a field the ruleset does not read.
+======================================================================= */
+
+const ENV_FEN_TYPES    = ["Win", "Dr", "Skylt"];
+const ENV_OPAQUE_TYPES = ["ExtWall", "Roof", "ExtFlr", "UndgrWall", "UndgrFlr",
+                          "IntWall", "IntFlr", "Ceiling"];
+// What construction this surface field will accept, read from the code year own
+// ObjectRef filter rather than a hand table: ExtWall:ConsAssmRef declares
+// ConsAssm (ConsAssm:CompatibleSurfType = "ExteriorWall"), and Win:FenConsRef declares
+// FenCons (FenCons:FenType = "VerticalFenestration"). Returns null where the cycle
+// declares no filter, in which case nothing is flagged rather than guessed.
+function envRefRequirement(surfType, prop){
+  const meta = fieldMeta(surfType, prop);
+  const refs = (meta && meta.refs) || [];
+  for(const r of refs){
+    if(r.filter) return {type: r.type, key: r.filter[0].split(":")[1], value: r.filter[1]};
+  }
+  return null;
+}
+// Integer props the ruleset uses as 0/1 flags. Named explicitly -- the model types
+// them as plain Integers, so this is knowledge about the fields, not a guess.
+const ENV_FLAG_PROPS = new Set(["FireRtdFlag", "FieldAppliedCoating", "BuiltUpRoof",
+  "BallastedRoof", "GreenhouseGardenWin", "Diffusing", "ShdgCred", "DynamicGlz",
+  "DrAutoCloser"]);
+
+function envSurfaces(){
+  return doc.records.filter(r => ENV_OPAQUE_TYPES.indexOf(r.type) !== -1 || ENV_FEN_TYPES.indexOf(r.type) !== -1);
+}
+function envRefProp(rec){
+  if(rec.type === "Win" || rec.type === "Skylt") return "FenConsRef";
+  if(rec.type === "Dr") return rec.attrs.FenConsRef !== undefined ? "FenConsRef" : "DrConsRef";
+  return "ConsAssmRef";
+}
+// How many surfaces point at a construction -- the number that decides whether
+// deleting it is safe.
+function envRefCount(name){
+  let n = 0;
+  for(const r of doc.records){
+    if(r.attrs.ConsAssmRef === name || r.attrs.FenConsRef === name || r.attrs.DrConsRef === name) n++;
+  }
+  return n;
+}
+// Duplicating an existing construction, rather than building one from scratch,
+// keeps every field CBECC expects present and valid. Inserted immediately after
+// its source so the file's own grouping of the library survives.
+function envDuplicate(rec, newName){
+  const copy = makeRecord(rec.type, newName);
+  for(const key of rec.order){
+    const v = rec.attrs[key];
+    if(v && v.__indexed){
+      for(const idx of Object.keys(v.values)) setIndexedAttr(copy, key, Number(idx), v.values[idx]);
+    } else {
+      setPlainAttr(copy, key, v);
+    }
+  }
+  doc.records.splice(doc.records.indexOf(rec) + 1, 0, copy);
+  dirtyRecords.add(copy);
+  return copy;
+}
+function envUniqueName(base){
+  let n = 2, name = base + " (copy)";
+  while(doc.records.some(r => r.name === name)){ name = base + " (copy " + n + ")"; n++; }
+  return name;
+}
+
+/* ---- Window-to-wall ratio ---------------------------------------------- */
+
+// Gross wall area is the wall polygon's own area. CBECC does not subtract the
+// window from the wall it hosts (ComponentAreas.rule keeps them separate), so
+// window area / wall area is the ratio without any deduction to reason about.
+function envWallStats(){
+  const byOrient = {};
+  for(const o of ORIENTATIONS) byOrient[o] = {wall: 0, win: 0, walls: []};
+  let unoriented = 0;
+  for(const spc of (doc.spaces || [])){
+    for(const surf of (spc.surfaces || [])){
+      if(surf.type !== "ExtWall") continue;
+      const area = polyArea3D(surf.points);
+      if(!area) continue;
+      const az = polyAzimuth(surf.points);
+      const orient = azToOrientation(az);
+      if(!orient){ unoriented++; continue; }
+      let winArea = 0;
+      const wins = [];
+      for(const op of (surf.openings || [])){
+        if(op.type !== "Win") continue;
+        const a = polyArea3D(op.points);
+        if(!a) continue;
+        winArea += a; wins.push({rec: op, area: a});
+      }
+      byOrient[orient].wall += area;
+      byOrient[orient].win  += winArea;
+      byOrient[orient].walls.push({rec: surf, area, az, wins});
+    }
+  }
+  return {byOrient, unoriented};
+}
+function envRoofStats(){
+  let roof = 0, sky = 0;
+  for(const spc of (doc.spaces || [])){
+    for(const surf of (spc.surfaces || [])){
+      if(surf.type !== "Roof") continue;
+      const a = polyArea3D(surf.points);
+      if(a) roof += a;
+    }
+  }
+  for(const r of doc.records){
+    if(r.type !== "Skylt") continue;
+    const a = polyArea3D(r.points);
+    if(a) sky += a;
+  }
+  return {roof, sky};
+}
+
+// Project a planar polygon into 2D in its own plane, so "is this point still
+// inside the host wall" is an ordinary 2D test.
+function envPlaneBasis(points){
+  const n = polyNewell(points);
+  if(!n) return null;
+  const len = Math.sqrt(n[0]*n[0] + n[1]*n[1] + n[2]*n[2]);
+  if(len < 1e-9) return null;
+  const nrm = [n[0]/len, n[1]/len, n[2]/len];
+  // Any vector not parallel to the normal works as the seed for the first axis.
+  const seed = Math.abs(nrm[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];
+  let u = [seed[1]*nrm[2] - seed[2]*nrm[1], seed[2]*nrm[0] - seed[0]*nrm[2], seed[0]*nrm[1] - seed[1]*nrm[0]];
+  const ul = Math.sqrt(u[0]*u[0] + u[1]*u[1] + u[2]*u[2]);
+  if(ul < 1e-9) return null;
+  u = [u[0]/ul, u[1]/ul, u[2]/ul];
+  const v = [nrm[1]*u[2] - nrm[2]*u[1], nrm[2]*u[0] - nrm[0]*u[2], nrm[0]*u[1] - nrm[1]*u[0]];
+  const org = points[0];
+  return {
+    to2D: p => {
+      const d = [p[0]-org[0], p[1]-org[1], p[2]-org[2]];
+      return [d[0]*u[0] + d[1]*u[1] + d[2]*u[2], d[0]*v[0] + d[1]*v[1] + d[2]*v[2]];
+    }
+  };
+}
+function pointInPoly2D(pt, poly){
+  let inside = false;
+  for(let i = 0, j = poly.length - 1; i < poly.length; j = i++){
+    const xi = poly[i][0], yi = poly[i][1], xj = poly[j][0], yj = poly[j][1];
+    if(((yi > pt[1]) !== (yj > pt[1])) &&
+       (pt[0] < (xj - xi) * (pt[1] - yi) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
+}
+function polyCentroid3D(points){
+  let x = 0, y = 0, z = 0;
+  for(const p of points){ x += p[0]; y += p[1]; z += p[2]; }
+  const n = points.length;
+  return [x/n, y/n, z/n];
+}
+
+// The largest scale factor, at most `want`, that keeps every scaled window
+// vertex inside its host wall. Uniform scaling about the polygon's own centroid
+// is in-plane by construction (the centroid is coplanar with the polygon), so
+// this never tilts a window out of its wall.
+function envMaxWindowScale(winPoints, wallPoints, want){
+  const basis = envPlaneBasis(wallPoints);
+  if(!basis) return want;
+  const wall2 = wallPoints.map(basis.to2D);
+  const c = polyCentroid3D(winPoints);
+  const fits = f => winPoints.every(p => pointInPoly2D(
+    basis.to2D([c[0] + (p[0]-c[0])*f, c[1] + (p[1]-c[1])*f, c[2] + (p[2]-c[2])*f]), wall2));
+  if(fits(want)) return want;
+  let lo = 1e-3, hi = want;
+  if(!fits(lo)) return null;                       // already outside its wall
+  for(let i = 0; i < 30; i++){
+    const mid = (lo + hi) / 2;
+    if(fits(mid)) lo = mid; else hi = mid;
+  }
+  return lo * 0.999;                               // stay a hair off the edge
+}
+function envScaleWindow(winRec, ptRecs, factor){
+  const pts = ptRecs.map(r => r.attrs.Coord);
+  const c = polyCentroid3D(pts);
+  for(const pr of ptRecs){
+    const p = pr.attrs.Coord;
+    setPlainAttr(pr, "Coord", [
+      Math.round((c[0] + (p[0]-c[0])*factor) * 1e6) / 1e6,
+      Math.round((c[1] + (p[1]-c[1])*factor) * 1e6) / 1e6,
+      Math.round((c[2] + (p[2]-c[2])*factor) * 1e6) / 1e6,
+    ]);
+    dirtyRecords.add(pr);
+  }
+  // Win:Area is only an input in Simplified-geometry files, but where the file
+  // carries one it has to keep agreeing with the polygon we just moved.
+  if(winRec.attrs.Area !== undefined && typeof winRec.attrs.Area === "number"){
+    setPlainAttr(winRec, "Area", Math.round(winRec.attrs.Area * factor * factor * 1e6) / 1e6);
+    dirtyRecords.add(winRec);
+  }
+}
+
+function renderEnvelopeForm(container){
+  if(!doc){ container.innerHTML = '<div class="warn-line">Load a file first.</div>'; return; }
+  container.innerHTML = "";
+  const wrap = document.createElement('div');
+  container.appendChild(wrap);
+
+  const notice = wfFieldModelNotice();
+  if(notice) wrap.appendChild(notice);
+
+  const redrawAll = () => renderEnvelopeForm(container);
+
+  /* ---- 1. Fenestration constructions ---------------------------------- */
+  const fenCons = doc.records.filter(r => r.type === "FenCons");
+  wrap.appendChild(wfSectionTitle("Fenestration constructions — FenCons (" + fenCons.length + ")"));
+  wrap.appendChild(wfNote(
+    "U-factor, SHGC and VT are inputs here, and this is the only place in the file they exist — " +
+    "a window record carries no performance of its own, only a <code>FenConsRef</code>. " +
+    "The certification and framing enums narrow each other exactly as the ruleset does: " +
+    "<code>FenProdType</code> follows <code>FenType</code>, and <code>CertificationMthd</code> " +
+    "follows <code>AssmContext</code> and <code>FenType</code>, so an option only appears where " +
+    "CBECC would offer it. With <code>CertificationMthd = NFRCRated</code> the ruleset offers no " +
+    "framing or pane count — the rated U-factor already accounts for them."));
+  if(!fenCons.length){
+    wrap.appendChild(wfNote("No FenCons records in this file."));
+  } else {
+    const ft = wfTable(["Name", "FenType", "FenProdType", "AssmContext", "CertificationMthd",
+      fieldLabel("FenCons", "UFactor"), fieldLabel("FenCons", "SHGC"), fieldLabel("FenCons", "VT"),
+      "FenFrm", "FenPanes", "GlzTint", "Used by", ""]);
+    for(const fc of fenCons){
+      const tr = document.createElement('tr');
+      wfCell(tr, fc.name, "font-family:var(--mono);color:var(--text);white-space:nowrap;");
+      wfCell(tr, wfEnumInput(fc, "FenType", redrawAll, {width: "150px"}));
+      wfCell(tr, wfEnumInput(fc, "FenProdType", redrawAll, {width: "140px"}));
+      wfCell(tr, wfEnumInput(fc, "AssmContext", redrawAll, {width: "130px"}));
+      wfCell(tr, wfEnumInput(fc, "CertificationMthd", redrawAll, {width: "150px"}));
+      wfCell(tr, wfNumberInput(fc, "UFactor", redrawAll));
+      wfCell(tr, wfNumberInput(fc, "SHGC", redrawAll));
+      wfCell(tr, wfNumberInput(fc, "VT", redrawAll));
+      wfCell(tr, wfEnumInput(fc, "FenFrm", redrawAll, {width: "150px"}));
+      wfCell(tr, wfEnumInput(fc, "FenPanes", redrawAll, {width: "130px"}));
+      wfCell(tr, wfEnumInput(fc, "GlzTint", redrawAll, {width: "120px"}));
+      const uses = envRefCount(fc.name);
+      wfCell(tr, uses ? uses + " surface" + (uses === 1 ? "" : "s") : "<span style='color:var(--edited);'>unused</span>",
+        "font-size:11px;color:var(--text-dim);white-space:nowrap;");
+      const actions = document.createElement('div');
+      actions.style.cssText = "display:flex;gap:4px;";
+      actions.appendChild(wfBtn("Duplicate", () => {
+        envDuplicate(fc, envUniqueName(fc.name));
+        appliedSteps.add("review-envelope"); renderWorkflowSidebar();
+        renderTypes(); renderRecords(); updateStatus(); redrawAll();
+      }));
+      if(uses === 0){
+        actions.appendChild(wfBtn("Delete", () => {
+          doc.records.splice(doc.records.indexOf(fc), 1);
+          dirtyRecords.delete(fc);
+          renderTypes(); renderRecords(); updateStatus(); redrawAll();
+        }));
+      }
+      wfCell(tr, actions);
+      ft.__body.appendChild(tr);
+    }
+    wrap.appendChild(wfScrollTable(ft, "40vh"));
+  }
+
+  /* ---- 2. Opaque assemblies ------------------------------------------- */
+  const consAssms = doc.records.filter(r => r.type === "ConsAssm");
+  const mats = doc.records.filter(r => r.type === "Mat");
+  wrap.appendChild(wfSectionTitle("Opaque assemblies — ConsAssm (" + consAssms.length + ")"));
+  wrap.appendChild(wfNote(
+    "<strong>There is no U-factor field on a ConsAssm.</strong> CBECC computes the assembly " +
+    "U-factor from the layer stack, so the layers below <em>are</em> the U-factor. Layers are " +
+    "outside-in, as CBECC lists them, and the pickers offer the <code>Mat</code> records already " +
+    "in this file — adding a material that isn't in the file needs CBECC's own material library, " +
+    "which this tool does not carry. <code>CompatibleSurfType</code> decides which surfaces may " +
+    "reference the assembly, so changing it can orphan assignments; the next panel flags any that " +
+    "no longer match."));
+  if(!consAssms.length){
+    wrap.appendChild(wfNote("No ConsAssm records in this file."));
+  } else {
+    for(const ca of consAssms){
+      const card = document.createElement('div');
+      card.style.cssText = "border:1px solid var(--border);border-radius:var(--radius-2);" +
+        "background:var(--panel);padding:12px 14px;margin-bottom:10px;";
+      const head = document.createElement('div');
+      head.style.cssText = "display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px;";
+      const nm = document.createElement('div');
+      nm.style.cssText = "font-family:var(--mono);font-size:12px;color:var(--text);";
+      nm.textContent = ca.name;
+      head.appendChild(nm);
+      const compatWrap = document.createElement('div');
+      compatWrap.style.cssText = "display:flex;gap:6px;align-items:center;";
+      const compatLbl = document.createElement('span');
+      compatLbl.style.cssText = "font-size:11px;color:var(--ink-faint);";
+      compatLbl.textContent = "CompatibleSurfType";
+      compatWrap.appendChild(compatLbl);
+      compatWrap.appendChild(wfEnumInput(ca, "CompatibleSurfType", redrawAll, {width: "170px"}));
+      head.appendChild(compatWrap);
+      const uses = envRefCount(ca.name);
+      const useEl = document.createElement('span');
+      useEl.style.cssText = "font-size:11px;color:" + (uses ? "var(--text-dim)" : "var(--edited)") + ";";
+      useEl.textContent = uses ? uses + " surface" + (uses === 1 ? "" : "s") : "unused";
+      head.appendChild(useEl);
+      head.appendChild(wfBtn("Duplicate", () => {
+        envDuplicate(ca, envUniqueName(ca.name));
+        appliedSteps.add("review-envelope"); renderWorkflowSidebar();
+        renderTypes(); renderRecords(); updateStatus(); redrawAll();
+      }));
+      if(uses === 0) head.appendChild(wfBtn("Delete", () => {
+        doc.records.splice(doc.records.indexOf(ca), 1);
+        dirtyRecords.delete(ca);
+        renderTypes(); renderRecords(); updateStatus(); redrawAll();
+      }));
+      card.appendChild(head);
+
+      // Layers. MatRef is an indexed field (#Vals: 10 in the model), 1-based.
+      const layerMeta = fieldMeta("ConsAssm", "MatRef") || {};
+      const maxLayers = layerMeta.nVals || 10;
+      const layers = [];
+      const mr = ca.attrs.MatRef;
+      if(mr && mr.__indexed){
+        for(const idx of Object.keys(mr.values).map(Number).sort((a, b) => a - b)) layers.push([idx, mr.values[idx]]);
+      }
+      const lt = wfTable(["Layer", "Mat", ""]);
+      const matNames = mats.map(m => m.name);
+      for(const [idx, name] of layers){
+        const tr = document.createElement('tr');
+        wfCell(tr, String(idx), "font-family:var(--mono);color:var(--text-dim);width:50px;");
+        const known = matNames.indexOf(name) !== -1;
+        const combo = createWfCombo(name, !known, "— pick a material —",
+          () => matNames, () => known ? null : name,
+          (val) => {
+            if(val){ setIndexedAttr(ca, "MatRef", idx, val); dirtyRecords.add(ca); updateStatus(); redrawAll(); }
+          });
+        const ci = combo.querySelector('input');
+        if(ci){ ci.style.width = "320px"; if(!known) ci.title = "No Mat record of this name is in the file"; }
+        wfCell(tr, combo);
+        const del = wfBtn("Remove", () => {
+          // Layer order is the assembly, so removing layer 2 of 5 has to close the
+          // gap -- leaving a hole would silently reorder the stack CBECC reads.
+          const kept = layers.filter(l => l[0] !== idx).map(l => l[1]);
+          deletePlainAttr(ca, "MatRef");
+          kept.forEach((n, i) => setIndexedAttr(ca, "MatRef", i + 1, n));
+          dirtyRecords.add(ca); updateStatus(); redrawAll();
+        });
+        wfCell(tr, del);
+        lt.__body.appendChild(tr);
+      }
+      card.appendChild(lt);
+      if(layers.length < maxLayers && matNames.length){
+        const addRow = document.createElement('div');
+        addRow.style.cssText = "margin-top:8px;";
+        addRow.appendChild(wfBtn("Add layer", () => {
+          const nextIdx = layers.length ? Math.max.apply(null, layers.map(l => l[0])) + 1 : 1;
+          setIndexedAttr(ca, "MatRef", nextIdx, matNames[0]);
+          dirtyRecords.add(ca); updateStatus(); redrawAll();
+        }));
+        card.appendChild(addRow);
+      }
+
+      // Cool-roof properties. Only meaningful on a roof assembly, and that's
+      // exactly where CBECC asks for them, so they only appear there.
+      if(ca.attrs.CompatibleSurfType === "Roof"){
+        const roofBox = document.createElement('div');
+        roofBox.style.cssText = "margin-top:10px;display:flex;gap:14px;flex-wrap:wrap;align-items:center;";
+        const rl = document.createElement('span');
+        rl.style.cssText = "font-size:11px;color:var(--ink-faint);";
+        rl.textContent = "Roof surface (CRRC)";
+        roofBox.appendChild(rl);
+        for(const prop of ["CRRCInitialRefl", "CRRCAgedRefl", "CRRCInitialEmit", "CRRCAgedEmit"]){
+          const g = document.createElement('label');
+          g.style.cssText = "font-size:11px;color:var(--text-dim);display:flex;gap:5px;align-items:center;";
+          g.appendChild(document.createTextNode(prop.replace("CRRC", "")));
+          g.appendChild(wfNumberInput(ca, prop, redrawAll, {step: "0.01"}));
+          roofBox.appendChild(g);
+        }
+        for(const prop of ["FieldAppliedCoating", "BuiltUpRoof", "BallastedRoof"]){
+          const g = document.createElement('label');
+          g.style.cssText = "font-size:11px;color:var(--text-dim);display:flex;gap:5px;align-items:center;";
+          g.appendChild(wfFlagInput(ca, prop, redrawAll));
+          g.appendChild(document.createTextNode(prop));
+          roofBox.appendChild(g);
+        }
+        card.appendChild(roofBox);
+      }
+      wrap.appendChild(card);
+    }
+  }
+
+  /* ---- 3. Surface assignments ----------------------------------------- */
+  const surfaces = envSurfaces();
+  const missing = surfaces.filter(s => rec2ref(s) === undefined);
+  function rec2ref(s){ return s.attrs[envRefProp(s)]; }
+  // A surface pointing at an assembly whose CompatibleSurfType is for a
+  // different surface type is a compliance error in CBECC, and easy to create by
+  // editing CompatibleSurfType above, so it gets its own flag rather than
+  // being folded into "missing".
+  function mismatchReason(s){
+    const ref = rec2ref(s);
+    if(ref === undefined) return null;
+    const prop = envRefProp(s);
+    const req = envRefRequirement(s.type, prop);
+    const target = doc.records.find(r => r.name === ref &&
+      (r.type === "ConsAssm" || r.type === "FenCons" || r.type === "DrCons"));
+    if(!target) return "no such construction";
+    if(req && req.type !== target.type) return "that is a " + target.type + ", not a " + req.type;
+    // Only flag a real disagreement: a construction that has not said which category
+    // it belongs to is unset, not wrong.
+    if(req && target.attrs[req.key] !== undefined && String(target.attrs[req.key]) !== req.value)
+      return "construction is " + req.key + " " + target.attrs[req.key] + ", needs " + req.value;
+    return null;
+  }
+  const mismatched = surfaces.filter(s => mismatchReason(s));
+
+  wrap.appendChild(wfSectionTitle("Surface assignments (" + surfaces.length + " surfaces)"));
+  let assignSummary = surfaces.length + " surface records";
+  if(missing.length) assignSummary += " &mdash; <span style='color:var(--edited);'>" + missing.length + " with no construction</span>";
+  if(mismatched.length) assignSummary += " &mdash; <span style='color:var(--edited);'>" + mismatched.length + " pointing at the wrong kind</span>";
+  wrap.appendChild(wfNote(assignSummary + ". Each picker offers only the constructions the ruleset " +
+    "lets that surface type accept."));
+
+  // Bulk assign, per surface type -- the common case is "every exterior wall gets
+  // this assembly", and doing that a row at a time in a 300-surface model is not
+  // a workflow.
+  const bulk = document.createElement('div');
+  bulk.style.cssText = "border:1px solid var(--border);border-radius:var(--radius-2);background:var(--panel);" +
+    "padding:12px 14px;margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;";
+  const bulkLbl = document.createElement('span');
+  bulkLbl.style.cssText = "font-family:var(--mono);font-size:10.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--ink-faint);";
+  bulkLbl.textContent = "Assign to every";
+  bulk.appendChild(bulkLbl);
+  const presentTypes = [];
+  for(const s of surfaces) if(presentTypes.indexOf(s.type) === -1) presentTypes.push(s.type);
+  let bulkType = presentTypes[0] || null;
+  let bulkValue = null;
+  const bulkTypeSlot = document.createElement('div');
+  const bulkRefSlot  = document.createElement('div');
+  function drawBulkRef(){
+    bulkRefSlot.innerHTML = "";
+    bulkValue = null;
+    if(!bulkType) return;
+    const sample = surfaces.find(s => s.type === bulkType);
+    const prop = envRefProp(sample);
+    const combo = createWfCombo(null, false, "— choose " + prop + " —",
+      () => refCandidates(sample.type, prop), () => null, (val) => { bulkValue = val; });
+    const ci = combo.querySelector('input');
+    if(ci) ci.style.width = "300px";
+    bulkRefSlot.appendChild(combo);
+  }
+  const typeCombo = createWfCombo(bulkType, false, "— surface type —",
+    () => presentTypes, () => null, (val) => { bulkType = val; drawBulkRef(); });
+  const tci = typeCombo.querySelector('input');
+  if(tci) tci.style.width = "140px";
+  bulkTypeSlot.appendChild(typeCombo);
+  bulk.appendChild(bulkTypeSlot);
+  bulk.appendChild(bulkRefSlot);
+  drawBulkRef();
+  const bulkMsg = document.createElement('span');
+  bulkMsg.style.cssText = "font-size:11px;color:var(--text-dim);";
+  bulk.appendChild(wfBtn("Apply", () => {
+    if(!bulkType || !bulkValue){ bulkMsg.textContent = "Pick a surface type and a construction first."; return; }
+    let n = 0;
+    for(const s of surfaces){
+      if(s.type !== bulkType) continue;
+      setPlainAttr(s, envRefProp(s), bulkValue);
+      dirtyRecords.add(s); n++;
+    }
+    appliedSteps.add("review-envelope");
+    renderWorkflowSidebar(); renderRecords(); if(activeRecord) renderDetail(); updateStatus();
+    redrawAll();
+  }, true));
+  bulk.appendChild(bulkMsg);
+  wrap.appendChild(bulk);
+
+  let surfFilter = "";
+  let onlyProblems = false;
+  const filterRow = document.createElement('div');
+  filterRow.style.cssText = "display:flex;gap:12px;align-items:center;margin-bottom:8px;";
+  const filterInput = createPlainFilterInput("Filter surfaces by name...", (v) => { surfFilter = v; drawSurfBody(); });
+  filterInput.style.flex = "1";
+  filterRow.appendChild(filterInput);
+  const probLbl = document.createElement('label');
+  probLbl.style.cssText = "font-size:11.5px;color:var(--text-dim);display:flex;gap:6px;align-items:center;white-space:nowrap;";
+  const probCb = document.createElement('input');
+  probCb.type = "checkbox";
+  probCb.addEventListener('change', () => { onlyProblems = probCb.checked; drawSurfBody(); });
+  probLbl.appendChild(probCb);
+  probLbl.appendChild(document.createTextNode("only surfaces needing attention"));
+  filterRow.appendChild(probLbl);
+  wrap.appendChild(filterRow);
+
+  const st = wfTable(["Type", "Name", "Space", "Construction", "Area (ft²)", "Azimuth", ""]);
+  wrap.appendChild(wfScrollTable(st, "50vh"));
+  function drawSurfBody(){
+    st.__body.innerHTML = "";
+    for(const s of surfaces){
+      const problem = rec2ref(s) === undefined ? "no construction" : mismatchReason(s);
+      if(onlyProblems && !problem) continue;
+      if(surfFilter && s.name.toLowerCase().indexOf(surfFilter.toLowerCase()) === -1) continue;
+      const tr = document.createElement('tr');
+      wfCell(tr, s.type, "font-family:var(--mono);font-size:11px;color:var(--text-dim);white-space:nowrap;");
+      wfCell(tr, s.name, "font-family:var(--mono);color:var(--text);white-space:nowrap;");
+      const host = s.spc || (s.host && s.host.spc);
+      wfCell(tr, host ? host.name : "—", "font-size:11px;color:var(--ink-muted);white-space:nowrap;");
+      wfCell(tr, wfRefInput(s, envRefProp(s), () => { renderRecords(); drawSurfBody(); }, {width: "260px"}));
+      const area = polyArea3D(s.points);
+      wfCell(tr, area !== null ? fmtNum(area, 0) : (s.attrs.Area !== undefined ? fmtNum(s.attrs.Area, 0) : "—"),
+        "font-family:var(--mono);color:var(--text-dim);text-align:right;");
+      const az = polyAzimuth(s.points);
+      wfCell(tr, az === null ? "—" : fmtNum(az, 0) + "°", "font-family:var(--mono);color:var(--text-dim);text-align:right;");
+      wfCell(tr, problem ? "⚠ " + problem : "", "font-size:10.5px;color:var(--edited);white-space:nowrap;");
+      st.__body.appendChild(tr);
+    }
+  }
+  drawSurfBody();
+
+  /* ---- 4. Window-to-wall ratio ---------------------------------------- */
+  const stats = envWallStats();
+  const roofStats = envRoofStats();
+  const bldg = doc.records.find(r => r.type === "Bldg");
+  const bldgAz = bldg && bldg.attrs.BldgAz !== undefined ? bldg.attrs.BldgAz : null;
+
+  wrap.appendChild(wfSectionTitle("Window-to-wall ratio by orientation"));
+  wrap.appendChild(wfNote(
+    "Areas are the surfaces' own polygons (Newell's method), not the optional " +
+    "<code>Area</code> attribute, which only exists in Simplified-geometry files. Orientation is " +
+    "the wall's outward normal in the <em>model's</em> coordinates" +
+    (bldgAz !== null ? "; this building is rotated by <code>Bldg:BldgAz</code> = " + fmtNum(bldgAz, 0) +
+      "°, so true orientation is that much further clockwise" : "") + ". " +
+    (stats.unoriented ? "<span style='color:var(--edited);'>" + stats.unoriented + " exterior wall(s) " +
+      "have no usable polygon and are left out of the totals.</span> " : "") +
+    "CBECC does not deduct window area from the wall that hosts it, so these ratios need no deduction " +
+    "to reason about."));
+
+  const wt = wfTable(["Orientation", "Gross wall (ft²)", "Window (ft²)", "WWR", "Walls", "Target WWR", ""]);
+  const targets = {};
+  for(const o of ORIENTATIONS){
+    const d = stats.byOrient[o];
+    const tr = document.createElement('tr');
+    wfCell(tr, o, "font-family:var(--mono);color:var(--text);");
+    wfCell(tr, fmtNum(d.wall, 0), "font-family:var(--mono);color:var(--text-dim);text-align:right;");
+    wfCell(tr, fmtNum(d.win, 0), "font-family:var(--mono);color:var(--text-dim);text-align:right;");
+    wfCell(tr, d.wall > 0 ? fmtNum(100 * d.win / d.wall, 1) + "%" : "—",
+      "font-family:var(--mono);color:var(--text);text-align:right;");
+    wfCell(tr, String(d.walls.length), "font-family:var(--mono);color:var(--text-dim);text-align:right;");
+    const inp = document.createElement('input');
+    inp.className = "wf-num"; inp.type = "number"; inp.min = "0"; inp.max = "95"; inp.step = "0.5";
+    inp.placeholder = "%";
+    inp.disabled = !(d.wall > 0);
+    targets[o] = inp;
+    wfCell(tr, inp);
+    const msg = document.createElement('span');
+    msg.style.cssText = "font-size:10.5px;color:var(--text-dim);";
+    wfCell(tr, msg);
+    const applyBtn = wfBtn("Rescale", () => {
+      const target = parseFloat(inp.value);
+      if(!isFinite(target) || target <= 0){ msg.textContent = "Enter a target percentage."; msg.style.color = "var(--edited)"; return; }
+      const res = envApplyWWR(d, target / 100);
+      msg.style.color = res.capped ? "var(--edited)" : "var(--text-dim)";
+      msg.textContent = res.message;
+      renderRecords(); if(activeRecord) renderDetail(); updateStatus();
+      appliedSteps.add("review-envelope"); renderWorkflowSidebar();
+      // Geometry moved: the hierarchy's cached point copies and the 3D view are
+      // both stale until they are rebuilt from the records.
+      buildHierarchy(doc);
+      if(scene) init3D();   // only if the viewer has ever been opened
+      renderEnvelopeForm(container);
+    });
+    const cell = tr.lastChild;
+    cell.appendChild(document.createTextNode(" "));
+    cell.appendChild(applyBtn);
+    wt.__body.appendChild(tr);
+  }
+  const totWall = ORIENTATIONS.reduce((a, o) => a + stats.byOrient[o].wall, 0);
+  const totWin  = ORIENTATIONS.reduce((a, o) => a + stats.byOrient[o].win, 0);
+  const totRow = document.createElement('tr');
+  wfCell(totRow, "All", "font-family:var(--mono);color:var(--text);font-weight:500;");
+  wfCell(totRow, fmtNum(totWall, 0), "font-family:var(--mono);color:var(--text);text-align:right;");
+  wfCell(totRow, fmtNum(totWin, 0), "font-family:var(--mono);color:var(--text);text-align:right;");
+  wfCell(totRow, totWall > 0 ? fmtNum(100 * totWin / totWall, 1) + "%" : "—",
+    "font-family:var(--mono);color:var(--text);text-align:right;font-weight:500;");
+  wfCell(totRow, ""); wfCell(totRow, ""); wfCell(totRow, "");
+  wt.__body.appendChild(totRow);
+  wrap.appendChild(wt);
+
+  wrap.appendChild(wfNote(
+    "<strong>Rescale</strong> moves the window polygons: each window is scaled about its own centre " +
+    "by √(target ÷ current), which is in-plane, so windows stay in their walls and keep " +
+    "their proportions. A window is never pushed past the edge of its host wall — the factor is " +
+    "reduced for that window if it would be, and the result says so, which means the orientation can " +
+    "land short of the target. It rewrites <code>CartesianPt</code> coordinates, so re-run CBECC's own " +
+    "geometry checks afterwards.", "warn"));
+
+  const skyBox = document.createElement('div');
+  skyBox.style.cssText = "font-size:11.5px;color:var(--text-dim);";
+  skyBox.innerHTML = "Roof: " + fmtNum(roofStats.roof, 0) + " ft² gross, " +
+    fmtNum(roofStats.sky, 0) + " ft² skylight — skylight-to-roof ratio " +
+    (roofStats.roof > 0 ? fmtNum(100 * roofStats.sky / roofStats.roof, 2) + "%" : "—") +
+    ". Skylight area is reported, not editable here.";
+  wrap.appendChild(skyBox);
+}
+
+// Scale every window on one orientation toward a target WWR. Returns what actually
+// happened, including whether any window hit its wall and held the orientation short.
+function envApplyWWR(orientData, targetRatio){
+  const ptMap = geomPointRecords(doc);
+  const current = orientData.wall > 0 ? orientData.win / orientData.wall : 0;
+  if(!(orientData.win > 0)) return {capped: true, message: "No windows on this orientation to rescale."};
+  if(current <= 0) return {capped: true, message: "No window area to scale from."};
+  const want = Math.sqrt(targetRatio / current);
+  let capped = 0, moved = 0, newWin = 0;
+  for(const wall of orientData.walls){
+    for(const w of wall.wins){
+      const ptRecs = ptMap.get(w.rec);
+      if(!ptRecs || ptRecs.length < 3){ newWin += w.area; continue; }
+      const winPts = ptRecs.map(r => r.attrs.Coord);
+      let f = want;
+      if(want > 1){
+        const maxF = envMaxWindowScale(winPts, wall.rec.points, want);
+        if(maxF === null){ newWin += w.area; continue; }   // already outside its wall: leave alone
+        if(maxF < want - 1e-9){ f = maxF; capped++; }
+      }
+      envScaleWindow(w.rec, ptRecs, f);
+      moved++;
+      newWin += w.area * f * f;
+    }
+  }
+  const achieved = orientData.wall > 0 ? 100 * newWin / orientData.wall : 0;
+  let msg = moved + " window" + (moved === 1 ? "" : "s") + " rescaled, WWR now " + fmtNum(achieved, 1) + "%";
+  if(capped) msg += " — " + capped + " held back by its wall";
+  return {capped: capped > 0, message: msg};
+}
+
+/* =======================================================================
+   STEP: INTERIOR LIGHTING
+   CBECC takes a space's regulated lighting power one of two ways
+   (Lighting-Space-General.rule, Spc:RegLtgPwr):
+
+     luminaire path  -- the space has IntLtgSys children, and power is the
+                        sum of their LumCnt x Lum:Pwr. Spc:IntLPDReg is
+                        ignored entirely.
+     space-level     -- no IntLtgSys children, so power is
+                        Spc:IntLPDReg x floor area. IntLPDReg's own default
+                        is the space function's Appendix 5.4A value.
+
+   A third case overrides both: Spc:ApplyStdLtg = 1 makes the proposed
+   lighting equal to the standard design. The ruleset sets it for
+   residential-occupancy spaces and for LtgStatus = "Future", so this step
+   flags a Future status rather than pretending the number is used.
+
+   This step edits both paths. It does not create IntLtgSys or Lum records:
+   IntLtgSys:AllowType is conditioned on the parent space's function across
+   about 600 ruleset branches, and offering a new lighting system without
+   that vocabulary would mean guessing which allowances a space may claim.
+======================================================================= */
+
+// IntLtgSys is a positional child of Spc, like the HVAC subcomponents -- the
+// file nests it, the parser flattens it, so ownership is "which Spc came last".
+function mapIntLtgSystems(){
+  const map = new Map();
+  let cur = null;
+  for(const r of doc.records){
+    if(r.type === "Spc"){ cur = r; map.set(r, []); }
+    else if(r.type === "Story" || r.type === "Bldg"){ cur = null; }
+    else if(r.type === "IntLtgSys" && cur){ map.get(cur).push(r); }
+  }
+  return map;
+}
+// Watts of one lighting system: sum over its LumRef[i] of count x the
+// luminaire's Pwr. Missing count defaults to 0, which is also the ruleset's own
+// default for LumCnt, so an unset count contributes nothing rather than guessing 1.
+function ltgSystemWatts(sys){
+  const refs = sys.attrs.LumRef;
+  if(!refs || !refs.__indexed) return null;
+  let total = 0, any = false;
+  for(const idx of Object.keys(refs.values)){
+    const lumName = refs.values[idx];
+    const lum = doc.records.find(r => r.type === "Lum" && r.name === lumName);
+    const cnts = sys.attrs.LumCnt;
+    const cnt = (cnts && cnts.__indexed) ? (cnts.values[idx] || 0) : 0;
+    const pwr = lum && typeof lum.attrs.Pwr === "number" ? lum.attrs.Pwr : 0;
+    total += cnt * pwr; any = true;
+  }
+  return any ? total : null;
+}
+function spaceLtgWatts(spc, systems){
+  if(!systems.length) return null;
+  let total = 0;
+  for(const s of systems){ const w = ltgSystemWatts(s); if(w !== null) total += w; }
+  return total;
+}
+
+function renderLightingForm(container){
+  if(!doc){ container.innerHTML = '<div class="warn-line">Load a file first.</div>'; return; }
+  container.innerHTML = "";
+  const wrap = document.createElement('div');
+  container.appendChild(wrap);
+
+  const notice = wfFieldModelNotice();
+  if(notice) wrap.appendChild(notice);
+
+  const spaces  = doc.records.filter(r => r.type === "Spc");
+  const ltgMap  = mapIntLtgSystems();
+  const lums    = doc.records.filter(r => r.type === "Lum");
+  const defaults = getLoadDefaults();
+  const redraw = () => renderLightingForm(container);
+
+  if(!spaces.length){ wrap.appendChild(wfNote("No spaces in this file.")); return; }
+
+  if(!defaults){
+    wrap.appendChild(wfNote("<strong>T24-" + getCodeYear() + ":</strong> no Appendix 5.4A table for " +
+      "this cycle in this build, so no lighting power density default is offered. Values you type are " +
+      "still written; nothing is filled in for you, and no other cycle's numbers are borrowed.", "warn"));
+  }
+
+  /* ---- Space-level lighting power density ------------------------------ */
+  wrap.appendChild(wfSectionTitle("Lighting power density by space — Spc:IntLPDReg"));
+  wrap.appendChild(wfNote(
+    "<code>IntLPDReg</code> is the regulated interior lighting power density, in W/ft². It is what " +
+    "CBECC multiplies by floor area for any space with no lighting systems of its own. Spaces on the " +
+    "luminaire path show their connected watts instead, and their <code>IntLPDReg</code> is greyed " +
+    "out because the ruleset does not read it. <code>IntLPDNonReg</code> covers unregulated lighting " +
+    "(the exemptions in <code>NonRegExclusion</code>) and is added on top rather than counted against " +
+    "the allowance."));
+
+  let nameFilter = "";
+  const selected = new Set();
+
+  const bulkBox = document.createElement('div');
+  wrap.appendChild(bulkBox);
+
+  const filterRow = document.createElement('div');
+  filterRow.style.cssText = "margin-bottom:8px;";
+  filterRow.appendChild(createPlainFilterInput("Filter spaces by name...", (v) => { nameFilter = v; drawBody(); drawBulk(); }));
+  wrap.appendChild(filterRow);
+
+  function visibleSpaces(){
+    return spaces.filter(s => !nameFilter || s.name.toLowerCase().indexOf(nameFilter.toLowerCase()) !== -1);
+  }
+  // A space is only defaultable if the 5.4A table has a row for its function AND
+  // the space is on the space-level path. Applying a density to a luminaire-path
+  // space would write a number CBECC ignores.
+  function defaultFor(spc){
+    if(!defaults) return null;
+    const row = defaults[spc.attrs.SpcFunc];
+    if(!row || row.intLPDReg === undefined) return null;
+    return row.intLPDReg;
+  }
+  function isLumPath(spc){ return (ltgMap.get(spc) || []).length > 0; }
+
+  function drawBulk(){
+    bulkBox.innerHTML = "";
+    const vis = visibleSpaces();
+    const targets = vis.filter(s => selected.size ? selected.has(s) : true)
+                       .filter(s => !isLumPath(s) && defaultFor(s) !== null);
+    const box = document.createElement('div');
+    box.style.cssText = "border:1px solid var(--border);border-radius:var(--radius-2);background:var(--panel);" +
+      "padding:12px 14px;margin-bottom:12px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;";
+    const lbl = document.createElement('span');
+    lbl.style.cssText = "font-size:11.5px;color:var(--text-dim);";
+    lbl.innerHTML = selected.size
+      ? selected.size + " space(s) ticked &mdash; " + targets.length + " can take a 5.4A default"
+      : targets.length + " of " + vis.length + " listed spaces can take a 5.4A default";
+    box.appendChild(lbl);
+    const btn = wfBtn("Apply Appendix 5.4A LPD", () => {
+      for(const s of targets){
+        setPlainAttr(s, "IntLPDReg", defaultFor(s));
+        dirtyRecords.add(s);
+      }
+      appliedSteps.add("interior-lighting");
+      renderWorkflowSidebar(); renderRecords(); if(activeRecord) renderDetail(); updateStatus();
+      redraw();
+    }, true);
+    btn.disabled = targets.length === 0;
+    box.appendChild(btn);
+    bulkBox.appendChild(box);
+  }
+
+  const table = wfTable(["", "Space", "SpcFunc", "Area (ft²)", "Path",
+    fieldLabel("Spc", "IntLPDReg"), "5.4A", fieldLabel("Spc", "IntLPDNonReg"),
+    "LtgStatus", "Connected W", "W/ft²", ""]);
+  wrap.appendChild(wfScrollTable(table, "55vh"));
+
+  function drawBody(){
+    table.__body.innerHTML = "";
+    for(const spc of visibleSpaces()){
+      const systems = ltgMap.get(spc) || [];
+      const lumPath = systems.length > 0;
+      const area = spaceArea(spc);
+      const watts = spaceLtgWatts(spc, systems);
+      const def = defaultFor(spc);
+      const tr = document.createElement('tr');
+
+      const cb = document.createElement('input');
+      cb.type = "checkbox";
+      cb.checked = selected.has(spc);
+      cb.addEventListener('change', () => {
+        if(cb.checked) selected.add(spc); else selected.delete(spc);
+        drawBulk();
+      });
+      wfCell(tr, cb);
+      wfCell(tr, spc.name, "font-family:var(--mono);color:var(--text);white-space:nowrap;");
+      wfCell(tr, spc.attrs.SpcFunc || "<span style='color:var(--ink-faint);'>(none)</span>",
+        "font-size:11px;color:var(--text-dim);");
+      wfCell(tr, area !== null ? fmtNum(area, 0) : "—", "font-family:var(--mono);color:var(--text-dim);text-align:right;");
+      wfCell(tr, lumPath ? systems.length + " IntLtgSys" : "space-level",
+        "font-size:11px;color:" + (lumPath ? "var(--color-accent, #4B8A89)" : "var(--ink-muted)") + ";white-space:nowrap;");
+
+      if(lumPath){
+        const td = wfCell(tr, spc.attrs.IntLPDReg !== undefined ? fmtNum(spc.attrs.IntLPDReg, 2) : "—",
+          "font-family:var(--mono);color:var(--ink-faint);text-align:right;");
+        td.title = "This space has lighting systems, so CBECC computes its power from the luminaires " +
+          "and ignores IntLPDReg.";
+      } else {
+        wfCell(tr, wfNumberInput(spc, "IntLPDReg", () => { drawBody(); drawBulk(); }, {step: "0.01"}));
+      }
+
+      const defCell = document.createElement('div');
+      if(def === null){
+        defCell.innerHTML = "<span style='color:var(--ink-faint);'>—</span>";
+      } else {
+        const cur = spc.attrs.IntLPDReg;
+        const same = typeof cur === "number" && Math.abs(cur - def) < 1e-9;
+        if(lumPath || same){
+          defCell.innerHTML = "<span style='font-family:var(--mono);color:var(--text-dim);'>" + fmtExact(def) + "</span>";
+        } else {
+          const b = wfBtn(fmtExact(def), () => {
+            setPlainAttr(spc, "IntLPDReg", def);
+            dirtyRecords.add(spc);
+            appliedSteps.add("interior-lighting");
+            renderWorkflowSidebar(); renderRecords(); updateStatus();
+            drawBody(); drawBulk();
+          });
+          b.title = "Write Appendix 5.4A's value for " + spc.attrs.SpcFunc;
+          b.style.padding = "1px 6px";
+          defCell.appendChild(b);
+        }
+      }
+      wfCell(tr, defCell, "text-align:right;");
+
+      wfCell(tr, wfNumberInput(spc, "IntLPDNonReg", () => drawBody(), {step: "0.01"}));
+      wfCell(tr, wfEnumInput(spc, "LtgStatus", () => drawBody(), {width: "110px"}));
+      wfCell(tr, watts === null ? "—" : fmtNum(watts, 0),
+        "font-family:var(--mono);color:var(--text-dim);text-align:right;");
+      const lpd = (watts !== null && area) ? watts / area : null;
+      wfCell(tr, lpd === null ? "—" : fmtNum(lpd, 2),
+        "font-family:var(--mono);color:var(--text);text-align:right;");
+
+      const flags = [];
+      if(spc.attrs.LtgStatus === "Future") flags.push("⚠ Future status — standard design applies");
+      if(!lumPath && spc.attrs.IntLPDReg === undefined) flags.push("ruleset default");
+      if(!lumPath && spc.attrs.IntLPDReg !== undefined && def !== null &&
+         Math.abs(spc.attrs.IntLPDReg - def) > 1e-9) flags.push("differs from 5.4A");
+      wfCell(tr, flags.join(" · "), "font-size:10.5px;color:var(--edited);white-space:nowrap;");
+      table.__body.appendChild(tr);
+    }
+  }
+  drawBody();
+  drawBulk();
+
+  /* ---- Luminaire path ------------------------------------------------- */
+  const lumSpaces = spaces.filter(s => (ltgMap.get(s) || []).length > 0);
+  if(lumSpaces.length){
+    wrap.appendChild(wfSectionTitle("Lighting systems — IntLtgSys (" + lumSpaces.length + " space(s))"));
+    wrap.appendChild(wfNote(
+      "Counts are per luminaire type, referencing the <code>Lum</code> library below. " +
+      "<code>PwrReg</code> off means the system is unregulated, and then the ruleset requires an " +
+      "exclusion reason, so <code>NonRegExclusion</code> only appears in that case. " +
+      "<code>AllowType</code> is shown as it stands and not edited here — the ruleset conditions its " +
+      "options on the parent space's function, one branch per function, and this build does not " +
+      "carry that table."));
+    for(const spc of lumSpaces){
+      const card = document.createElement('div');
+      card.style.cssText = "border:1px solid var(--border);border-radius:var(--radius-2);background:var(--panel);" +
+        "padding:12px 14px;margin-bottom:10px;";
+      const head = document.createElement('div');
+      head.style.cssText = "font-family:var(--mono);font-size:12px;color:var(--text);margin-bottom:8px;";
+      const area = spaceArea(spc);
+      const watts = spaceLtgWatts(spc, ltgMap.get(spc));
+      head.textContent = spc.name + "  —  " + fmtNum(watts, 0) + " W" +
+        (area ? " over " + fmtNum(area, 0) + " ft² = " + fmtNum(watts / area, 2) + " W/ft²" : "");
+      card.appendChild(head);
+      for(const sys of ltgMap.get(spc)){
+        const sysRow = document.createElement('div');
+        sysRow.style.cssText = "display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:6px;";
+        const nm = document.createElement('span');
+        nm.style.cssText = "font-family:var(--mono);font-size:11.5px;color:var(--text-dim);";
+        nm.textContent = sys.name;
+        sysRow.appendChild(nm);
+        const regLbl = document.createElement('label');
+        regLbl.style.cssText = "font-size:11px;color:var(--text-dim);display:flex;gap:5px;align-items:center;";
+        regLbl.appendChild(wfFlagInput(sys, "PwrReg", redraw));
+        regLbl.appendChild(document.createTextNode("PwrReg"));
+        sysRow.appendChild(regLbl);
+        if(!sys.attrs.PwrReg){
+          const exWrap = document.createElement('div');
+          exWrap.style.cssText = "display:flex;gap:5px;align-items:center;";
+          const exLbl = document.createElement('span');
+          exLbl.style.cssText = "font-size:11px;color:var(--ink-faint);";
+          exLbl.textContent = "NonRegExclusion";
+          exWrap.appendChild(exLbl);
+          exWrap.appendChild(wfEnumInput(sys, "NonRegExclusion", redraw, {width: "280px"}));
+          sysRow.appendChild(exWrap);
+        }
+        if(sys.attrs.AllowType !== undefined){
+          const at = document.createElement('span');
+          at.style.cssText = "font-size:11px;color:var(--ink-muted);";
+          at.textContent = "AllowType: " + sys.attrs.AllowType;
+          sysRow.appendChild(at);
+        }
+        card.appendChild(sysRow);
+
+        const refs = sys.attrs.LumRef;
+        const lt = wfTable(["#", "Lum", fieldLabel("IntLtgSys", "LumCnt"), "Pwr (W ea)", "Watts", "LumStatus"]);
+        if(refs && refs.__indexed){
+          for(const idx of Object.keys(refs.values).map(Number).sort((a, b) => a - b)){
+            const lumName = refs.values[idx];
+            const lum = lums.find(l => l.name === lumName);
+            const cnts = sys.attrs.LumCnt;
+            const cnt = (cnts && cnts.__indexed) ? (cnts.values[idx] || 0) : 0;
+            const pwr = lum && typeof lum.attrs.Pwr === "number" ? lum.attrs.Pwr : null;
+            const tr = document.createElement('tr');
+            wfCell(tr, String(idx), "font-family:var(--mono);color:var(--text-dim);width:36px;");
+            const lumNames = lums.map(l => l.name);
+            const known = lumNames.indexOf(lumName) !== -1;
+            const combo = createWfCombo(lumName, !known, "— pick a luminaire —",
+              () => lumNames, () => known ? null : lumName,
+              (val) => {
+                if(val){ setIndexedAttr(sys, "LumRef", idx, val); dirtyRecords.add(sys); updateStatus(); redraw(); }
+              });
+            const ci = combo.querySelector('input');
+            if(ci) ci.style.width = "240px";
+            wfCell(tr, combo);
+            const cntInp = document.createElement('input');
+            cntInp.className = "wf-num"; cntInp.type = "number"; cntInp.min = "0"; cntInp.step = "1";
+            cntInp.value = cnt;
+            cntInp.title = fieldTitle("IntLtgSys", "LumCnt");
+            cntInp.addEventListener('change', () => {
+              setIndexedAttr(sys, "LumCnt", idx, cntInp.value === "" ? 0 : parseFloat(cntInp.value));
+              dirtyRecords.add(sys);
+              appliedSteps.add("interior-lighting");
+              renderWorkflowSidebar(); updateStatus(); redraw();
+            });
+            wfCell(tr, cntInp);
+            wfCell(tr, pwr === null ? "—" : fmtNum(pwr, 1), "font-family:var(--mono);color:var(--text-dim);text-align:right;");
+            wfCell(tr, pwr === null ? "—" : fmtNum(cnt * pwr, 0), "font-family:var(--mono);color:var(--text);text-align:right;");
+            const statusCell = document.createElement('div');
+            const stVals = fieldEnumVals(sys, "LumStatus");
+            const stCur = (sys.attrs.LumStatus && sys.attrs.LumStatus.__indexed) ? sys.attrs.LumStatus.values[idx] : undefined;
+            const stKnown = stCur === undefined || stVals.indexOf(stCur) !== -1;
+            const stCombo = createWfCombo(stCur === undefined ? null : stCur, !stKnown, "— not set —",
+              () => stVals, () => stKnown ? null : stCur,
+              (val) => {
+                if(val){ setIndexedAttr(sys, "LumStatus", idx, val); dirtyRecords.add(sys); updateStatus(); redraw(); }
+              });
+            const sci = stCombo.querySelector('input');
+            if(sci) sci.style.width = "110px";
+            statusCell.appendChild(stCombo);
+            wfCell(tr, statusCell);
+            lt.__body.appendChild(tr);
+          }
+        }
+        card.appendChild(lt);
+      }
+      wrap.appendChild(card);
+    }
+  }
+
+  /* ---- Luminaire library ---------------------------------------------- */
+  if(lums.length){
+    wrap.appendChild(wfSectionTitle("Luminaire library — Lum (" + lums.length + ")"));
+    wrap.appendChild(wfNote("<code>Pwr</code> is watts per luminaire, lamps plus ballast/driver. " +
+      "Editing it moves every lighting system that references this luminaire."));
+    const lt = wfTable(["Name", "FxtrType", "LampType", fieldLabel("Lum", "Pwr"), "Referenced by"]);
+    for(const lum of lums){
+      let refCount = 0;
+      for(const r of doc.records){
+        if(r.type !== "IntLtgSys") continue;
+        const refs = r.attrs.LumRef;
+        if(refs && refs.__indexed && Object.keys(refs.values).some(i => refs.values[i] === lum.name)) refCount++;
+      }
+      const tr = document.createElement('tr');
+      wfCell(tr, lum.name, "font-family:var(--mono);color:var(--text);white-space:nowrap;");
+      wfCell(tr, wfEnumInput(lum, "FxtrType", redraw, {width: "180px"}));
+      wfCell(tr, wfEnumInput(lum, "LampType", redraw, {width: "160px"}));
+      wfCell(tr, wfNumberInput(lum, "Pwr", redraw, {step: "0.1"}));
+      wfCell(tr, refCount ? refCount + " system" + (refCount === 1 ? "" : "s") :
+        "<span style='color:var(--edited);'>unused</span>", "font-size:11px;color:var(--text-dim);");
+      lt.__body.appendChild(tr);
+    }
+    wrap.appendChild(lt);
+  }
+}
+
+/* =======================================================================
+   STEP: PROCESS AND PLUG LOADS
+   Five densities live on Spc, and the ruleset treats them differently
+   (Space-RecepProcess.rule):
+
+     RecptPwrDens    receptacle / plug load, W/ft2. Defaulted from the
+                     space function's Appendix 5.4A row.
+     ElecEqpPwrDens  additional electric equipment, W/ft2.
+     GasEqpPwrDens   gas equipment, Btu/h-ft2. Also 5.4A-defaulted, except
+                     it is forced to 0 for an all-electric project
+                     (Proj:GasType = "None") whatever the table says.
+     ProcElecPwrDens process electrical, W/ft2 -- an Optional input with no
+                     table default, so it is only in the file if someone
+                     put it there.
+     ProcGasPwrDens  process gas, Btu/h-ft2. Same.
+
+   The occupancy step already writes RecptPwrDens and GasEqpPwrDens when a
+   space function is assigned. This step is where they get reviewed against
+   the table, where the two process densities are entered, and where the
+   heat-gain split and elevator/escalator loads are set.
+
+   Refrigeration is not here: Spc:CommRfrgEPD became "NotInput
+   IgnoreUserInput" in the 2022.3.0 ruleset, so CBECC discards anything
+   written to it. The 5.4A refrigeration column is shown for reference only.
+======================================================================= */
+
+const PROC_CATEGORIES = [
+  {key: "Recpt",    dens: "RecptPwrDens",    label: "Receptacle",         elec: true},
+  {key: "ElecEqp",  dens: "ElecEqpPwrDens",  label: "Electric equipment", elec: true},
+  {key: "GasEqp",   dens: "GasEqpPwrDens",   label: "Gas equipment",      elec: false},
+  {key: "ProcElec", dens: "ProcElecPwrDens", label: "Process electrical", elec: true},
+  {key: "ProcGas",  dens: "ProcGasPwrDens",  label: "Process gas",        elec: false},
+];
+// Units are the code year’s own, read from the generated model rather than repeated here.
+function procUnit(cat){ const m = fieldMeta("Spc", cat.dens); return (m && m.units) || ""; }
+// Space-RecepProcess.rule posts the all-electric gas error for every space EXCEPT
+// scientific laboratories and healthcare spaces, which its CHECKCODE exempts. Flagging
+// those would be flagging something CBECC accepts.
+function procGasExempt(spc){
+  return spc.attrs.SpcFunc === "Laboratory, Scientific" ||
+         spc.attrs.SpcFunc === "Scientific Laboratory Area" ||
+         !!spc.attrs.IsHlthCare;
+}
+
+function renderProcessForm(container){
+  if(!doc){ container.innerHTML = '<div class="warn-line">Load a file first.</div>'; return; }
+  container.innerHTML = "";
+  const wrap = document.createElement('div');
+  container.appendChild(wrap);
+
+  const notice = wfFieldModelNotice();
+  if(notice) wrap.appendChild(notice);
+
+  const spaces = doc.records.filter(r => r.type === "Spc");
+  if(!spaces.length){ wrap.appendChild(wfNote("No spaces in this file.")); return; }
+  const defaults = getLoadDefaults();
+  const proj = doc.records.find(r => r.type === "Proj");
+  const allElectric = proj && proj.attrs.GasType === "None";
+  const schedules = doc.records.filter(r => r.type === "Sch");
+  const redraw = () => renderProcessForm(container);
+
+  wrap.appendChild(wfNote(
+    "Densities are per square foot of the space's own floor area. Every box carries the ruleset's " +
+    "own error and warning band — a value CBECC would reject shows red, one it would warn about " +
+    "shows amber. Clearing a box removes the field rather than writing 0, which hands it back to " +
+    "CBECC's default; typing 0 asserts that the load really is zero." +
+    (allElectric ? " <strong>This project is all-electric</strong> (<code>Proj:GasType = \"None\"</code>), " +
+      "so the ruleset forces gas equipment to 0 regardless of what the table or this file says. " +
+      "Gas columns are flagged where they are not 0, except in the two cases the ruleset itself " +
+      "exempts: scientific laboratories and healthcare spaces." : "")));
+  if(!defaults){
+    wrap.appendChild(wfNote("<strong>T24-" + getCodeYear() + ":</strong> no Appendix 5.4A table for this " +
+      "cycle in this build, so no defaults are offered and none are borrowed from another cycle.", "warn"));
+  }
+
+  /* ---- Densities ------------------------------------------------------- */
+  let nameFilter = "";
+  const selected = new Set();
+  const bulkBox = document.createElement('div');
+  wrap.appendChild(bulkBox);
+  const filterRow = document.createElement('div');
+  filterRow.style.cssText = "margin-bottom:8px;";
+  filterRow.appendChild(createPlainFilterInput("Filter spaces by name...", (v) => { nameFilter = v; drawBody(); drawBulk(); }));
+  wrap.appendChild(filterRow);
+
+  function visibleSpaces(){
+    return spaces.filter(s => !nameFilter || s.name.toLowerCase().indexOf(nameFilter.toLowerCase()) !== -1);
+  }
+  function defRow(spc){ return defaults ? (defaults[spc.attrs.SpcFunc] || null) : null; }
+  // The occupancy step's two documented departures from the raw table, repeated here
+  // so both places agree: Computer Room's receptacle density, and the all-electric
+  // override on gas equipment.
+  function tableValue(spc, prop){
+    const row = defRow(spc);
+    if(!row) return null;
+    if(prop === "RecptPwrDens"){
+      if(spc.attrs.SpcFunc === "Computer Room") return 20.001;
+      return row.recptPwrDens !== undefined ? row.recptPwrDens : null;
+    }
+    if(prop === "GasEqpPwrDens"){
+      if(allElectric) return 0;
+      return row.gasEqpPwrDens !== undefined ? row.gasEqpPwrDens : null;
+    }
+    return null;
+  }
+
+  function drawBulk(){
+    bulkBox.innerHTML = "";
+    const vis = visibleSpaces();
+    const targets = vis.filter(s => selected.size ? selected.has(s) : true).filter(s => defRow(s));
+    const box = document.createElement('div');
+    box.style.cssText = "border:1px solid var(--border);border-radius:var(--radius-2);background:var(--panel);" +
+      "padding:12px 14px;margin-bottom:12px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;";
+    const lbl = document.createElement('span');
+    lbl.style.cssText = "font-size:11.5px;color:var(--text-dim);";
+    lbl.innerHTML = (selected.size ? selected.size + " space(s) ticked &mdash; " : "") + targets.length +
+      " with a 5.4A row";
+    box.appendChild(lbl);
+    const btn = wfBtn("Reset receptacle + gas equipment to 5.4A", () => {
+      for(const s of targets){
+        const r = tableValue(s, "RecptPwrDens");
+        const g = tableValue(s, "GasEqpPwrDens");
+        if(r !== null) setPlainAttr(s, "RecptPwrDens", r);
+        if(g !== null) setPlainAttr(s, "GasEqpPwrDens", g);
+        dirtyRecords.add(s);
+      }
+      appliedSteps.add("process-loads");
+      renderWorkflowSidebar(); renderRecords(); if(activeRecord) renderDetail(); updateStatus();
+      redraw();
+    }, true);
+    btn.disabled = targets.length === 0;
+    box.appendChild(btn);
+    bulkBox.appendChild(box);
+  }
+
+  const table = wfTable(["", "Space", "SpcFunc", "Area (ft²)",
+    "RecptPwrDens<br><span style='font-weight:400;text-transform:none;'>W/ft²</span>", "5.4A",
+    "ElecEqpPwrDens<br><span style='font-weight:400;text-transform:none;'>W/ft²</span>",
+    "GasEqpPwrDens<br><span style='font-weight:400;text-transform:none;'>Btu/h·ft²</span>", "5.4A",
+    "ProcElecPwrDens<br><span style='font-weight:400;text-transform:none;'>W/ft²</span>", "ProcElecSchRef",
+    "ProcGasPwrDens<br><span style='font-weight:400;text-transform:none;'>Btu/h·ft²</span>", "ProcGasSchRef",
+    "5.4A refrig<br><span style='font-weight:400;text-transform:none;'>W/ft², reference</span>", ""]);
+  wrap.appendChild(wfScrollTable(table, "55vh"));
+
+  const totals = document.createElement('div');
+  totals.style.cssText = "margin-top:10px;font-size:11.5px;color:var(--text-dim);line-height:1.7;";
+  wrap.appendChild(totals);
+
+  function defaultCell(spc, prop){
+    const t = tableValue(spc, prop);
+    const holder = document.createElement('div');
+    if(t === null){ holder.innerHTML = "<span style='color:var(--ink-faint);'>—</span>"; return holder; }
+    const cur = spc.attrs[prop];
+    if(typeof cur === "number" && Math.abs(cur - t) < 1e-6){
+      holder.innerHTML = "<span style='font-family:var(--mono);color:var(--text-dim);'>" + fmtExact(t) + "</span>";
+      return holder;
+    }
+    const b = wfBtn(fmtExact(t), () => {
+      setPlainAttr(spc, prop, t);
+      dirtyRecords.add(spc);
+      appliedSteps.add("process-loads");
+      renderWorkflowSidebar(); renderRecords(); updateStatus();
+      drawBody(); drawBulk();
+    });
+    b.style.padding = "1px 6px";
+    b.title = "Write Appendix 5.4A's value" +
+      (prop === "GasEqpPwrDens" && allElectric ? " (0 — all-electric project)" : "") +
+      (prop === "RecptPwrDens" && spc.attrs.SpcFunc === "Computer Room"
+        ? " (20.001 — the Standard defines a Computer Room as above 20 W/ft²)" : "");
+    holder.appendChild(b);
+    return holder;
+  }
+
+  function drawBody(){
+    table.__body.innerHTML = "";
+    const sum = {};
+    for(const c of PROC_CATEGORIES) sum[c.dens] = 0;
+    let areaKnown = 0;
+    for(const spc of visibleSpaces()){
+      const area = spaceArea(spc);
+      if(area) areaKnown += area;
+      const tr = document.createElement('tr');
+      const cb = document.createElement('input');
+      cb.type = "checkbox";
+      cb.checked = selected.has(spc);
+      cb.addEventListener('change', () => { if(cb.checked) selected.add(spc); else selected.delete(spc); drawBulk(); });
+      wfCell(tr, cb);
+      wfCell(tr, spc.name, "font-family:var(--mono);color:var(--text);white-space:nowrap;");
+      wfCell(tr, spc.attrs.SpcFunc || "<span style='color:var(--ink-faint);'>(none)</span>", "font-size:11px;color:var(--text-dim);");
+      wfCell(tr, area !== null ? fmtNum(area, 0) : "—", "font-family:var(--mono);color:var(--text-dim);text-align:right;");
+
+      wfCell(tr, wfNumberInput(spc, "RecptPwrDens", () => { drawBody(); drawBulk(); }, {step: "0.1"}));
+      wfCell(tr, defaultCell(spc, "RecptPwrDens"), "text-align:right;");
+      wfCell(tr, wfNumberInput(spc, "ElecEqpPwrDens", () => drawBody(), {step: "0.1"}));
+      wfCell(tr, wfNumberInput(spc, "GasEqpPwrDens", () => { drawBody(); drawBulk(); }, {step: "0.1"}));
+      wfCell(tr, defaultCell(spc, "GasEqpPwrDens"), "text-align:right;");
+      wfCell(tr, wfNumberInput(spc, "ProcElecPwrDens", () => drawBody(), {step: "0.1"}));
+      wfCell(tr, wfRefInput(spc, "ProcElecSchRef", () => drawBody(), {width: "160px"}));
+      wfCell(tr, wfNumberInput(spc, "ProcGasPwrDens", () => drawBody(), {step: "0.1"}));
+      wfCell(tr, wfRefInput(spc, "ProcGasSchRef", () => drawBody(), {width: "160px"}));
+      const row = defRow(spc);
+      wfCell(tr, (row && row.commRfrgEPD !== undefined && row.commRfrgEPD > 0) ? fmtNum(row.commRfrgEPD, 2) : "—",
+        "font-family:var(--mono);color:var(--ink-faint);text-align:right;");
+
+      const flags = [];
+      if(allElectric && !procGasExempt(spc)){
+        if((spc.attrs.GasEqpPwrDens || 0) > 0) flags.push("⚠ gas load on an all-electric project");
+        if((spc.attrs.ProcGasPwrDens || 0) > 0) flags.push("⚠ process gas on an all-electric project");
+      }
+      if((spc.attrs.ProcElecPwrDens || 0) > 0 && spc.attrs.ProcElecSchRef === undefined) flags.push("no process-elec schedule");
+      if((spc.attrs.ProcGasPwrDens || 0) > 0 && spc.attrs.ProcGasSchRef === undefined) flags.push("no process-gas schedule");
+      wfCell(tr, flags.join(" · "), "font-size:10.5px;color:var(--edited);white-space:nowrap;");
+      table.__body.appendChild(tr);
+
+      if(area){
+        for(const c of PROC_CATEGORIES){
+          const v = spc.attrs[c.dens];
+          if(typeof v === "number") sum[c.dens] += v * area;
+        }
       }
     }
-    html += `<tr>
-      <td style="font-family:var(--mono);font-size:11px;color:var(--text-dim);white-space:nowrap;">${s.type}</td>
-      <td class="wf-name">${s.name}</td>
-      <td style="font-size:11.5px;color:${hasRef?'var(--text)':'var(--edited)'};">${ref || '(none)'}</td>
-      <td style="font-size:11px;color:var(--ink-muted);">${detail}</td>
-      <td style="font-size:11.5px;color:var(--text-dim);">${s.attrs.Area != null ? s.attrs.Area : '—'}</td>
-    </tr>`;
+    // Connected load, not energy use -- these are peak densities times area, which
+    // is what a mechanical or electrical schedule would be checked against.
+    let html = "Connected load over " + fmtNum(areaKnown, 0) + " ft² of listed spaces with a usable floor area: ";
+    html += PROC_CATEGORIES.map(c => {
+      const t = sum[c.dens];
+      return c.label + " " + fmtNum(t / 1000, 1) + (c.elec ? " kW" : " kBtu/h");
+    }).join(" &middot; ");
+    totals.innerHTML = html;
   }
-  html += `</tbody></table>`;
-  container.innerHTML = html;
-}
+  drawBody();
+  drawBulk();
 
-/* =======================================================================
-   PLACEHOLDER — LIGHTING
-   In most compliance files, lighting is derived automatically from SpcFunc
-   by the CBECC-Com ruleset engine (no explicit LtgPwrDens attribute exists).
-   The explicit path uses IntLtgSys records with LumRef[n]/LumCnt[n] pointing
-   to Lum records that carry Pwr (watts per luminaire).
-   Full implementation is future work.
-======================================================================= */
-function renderLightingPlaceholder(container){
-  if(!doc){ container.innerHTML = '<div class="warn-line">Load a file first.</div>'; return; }
-  const spaces     = doc.records.filter(r => r.type === "Spc");
-  const ltgSystems = doc.records.filter(r => r.type === "IntLtgSys");
-  const lums       = doc.records.filter(r => r.type === "Lum");
-  let html = `<div class="wf-placeholder-note">Placeholder — full lighting input (fixture types, daylighting controls, schedules) will be built in a future session.<br>
-    In standard compliance files, lighting power density is ruleset-derived from SpcFunc — no LtgPwrDens attribute exists in the format.
-    Explicit lighting uses IntLtgSys with LumRef[n]/LumCnt[n] references to Lum records (Pwr = W/fixture).</div>`;
-  if(!spaces.length){
-    container.innerHTML = html + '<div style="color:var(--text-dim);font-size:12px;">No spaces found.</div>';
-    return;
-  }
-  // Helper: compute installed watts for an IntLtgSys record
-  function sysInstalledW(sys){
-    if(!sys || !sys.attrs.LumRef || !sys.attrs.LumRef.__indexed) return null;
-    let total = 0;
-    const idxs = Object.keys(sys.attrs.LumRef.values).map(Number);
-    for(const i of idxs){
-      const lumName = sys.attrs.LumRef.values[i];
-      const cnt = sys.attrs.LumCnt && sys.attrs.LumCnt.__indexed ? (sys.attrs.LumCnt.values[i] || 0) : 0;
-      const lum = lums.find(l => l.name === lumName);
-      const pwr = lum ? (lum.attrs.Pwr || 0) : 0;
-      total += cnt * pwr;
+  /* ---- Heat-gain split ------------------------------------------------- */
+  // Only the categories actually carrying a load, and only the spaces carrying it,
+  // the way the occupancy step surfaces gas equipment: a permanent column per
+  // fraction would be 20 columns wide and empty in most files.
+  const gainWrap = document.createElement('div');
+  wrap.appendChild(gainWrap);
+  let gainCat = null;
+  function drawGains(){
+    gainWrap.innerHTML = "";
+    const active = PROC_CATEGORIES.filter(c => spaces.some(s => (s.attrs[c.dens] || 0) > 0));
+    if(!active.length) return;
+    if(!gainCat || active.indexOf(gainCat) === -1) gainCat = active[0];
+    gainWrap.appendChild(wfSectionTitle("Heat-gain split"));
+    gainWrap.appendChild(wfNote(
+      "How much of each load turns into a space heat gain, and how that gain divides. " +
+      "<code>RadFrac</code> is the radiant share of the gain, <code>LatFrac</code> the latent share, " +
+      "and <code>LostFrac</code> the share that leaves without loading the space at all. The ruleset " +
+      "requires each to be between 0 and 1; it does not require them to sum to 1, so this step reports " +
+      "the sum rather than forcing it."));
+    const picker = document.createElement('div');
+    picker.style.cssText = "display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;";
+    for(const c of active){
+      const b = wfBtn(c.label, () => { gainCat = c; drawGains(); }, c === gainCat);
+      picker.appendChild(b);
     }
-    return total > 0 ? total : null;
+    gainWrap.appendChild(picker);
+    const props = [gainCat.key + "RadFrac", gainCat.key + "LatFrac", gainCat.key + "LostFrac"];
+    const gt = wfTable(["Space", gainCat.label + " (" + procUnit(gainCat) + ")"].concat(props).concat(["Sum"]));
+    for(const spc of spaces){
+      if(!((spc.attrs[gainCat.dens] || 0) > 0)) continue;
+      const tr = document.createElement('tr');
+      wfCell(tr, spc.name, "font-family:var(--mono);color:var(--text);white-space:nowrap;");
+      wfCell(tr, fmtNum(spc.attrs[gainCat.dens], 2), "font-family:var(--mono);color:var(--text-dim);text-align:right;");
+      let sum = 0, anySet = false;
+      for(const p of props){
+        wfCell(tr, wfNumberInput(spc, p, () => drawGains(), {step: "0.05"}));
+        const v = spc.attrs[p];
+        if(typeof v === "number"){ sum += v; anySet = true; }
+      }
+      wfCell(tr, anySet ? fmtNum(sum, 2) : "—", "font-family:var(--mono);color:" +
+        (anySet && Math.abs(sum - 1) > 0.001 ? "var(--edited)" : "var(--text-dim)") + ";text-align:right;");
+      gt.__body.appendChild(tr);
+    }
+    gainWrap.appendChild(wfScrollTable(gt, "40vh"));
   }
-  html += `<table class="wf-table"><thead><tr>
-    <th>Space</th><th>SpcFunc</th><th>IntLtgSysRef</th><th>Installed W</th>
-  </tr></thead><tbody>`;
-  for(const spc of spaces){
-    const ref = spc.attrs.IntLtgSysRef || null;
-    const sys = ref ? ltgSystems.find(l => l.name === ref) : null;
-    const installedW = sysInstalledW(sys);
-    const spcFunc = spc.attrs.SpcFunc || null;
-    html += `<tr>
-      <td class="wf-name">${spc.name}</td>
-      <td style="font-size:11px;color:${spcFunc?'var(--text)':'var(--ink-faint)'};">${spcFunc || '(none)'}</td>
-      <td style="font-size:11.5px;color:${ref?'var(--text)':'var(--ink-faint)'};">${ref || '—'}</td>
-      <td style="font-size:11.5px;color:${installedW!=null?'var(--text)':'var(--ink-faint)'};">${installedW!=null?installedW+' W':'—'}</td>
-    </tr>`;
+  drawGains();
+
+  /* ---- Elevators and escalators --------------------------------------- */
+  const elevWrap = document.createElement('div');
+  wrap.appendChild(elevWrap);
+  function drawElev(){
+    elevWrap.innerHTML = "";
+    const listed = spaces.filter(s => (s.attrs.ElevCnt || 0) > 0 || (s.attrs.EscalCnt || 0) > 0);
+    elevWrap.appendChild(wfSectionTitle("Elevators and escalators" + (listed.length ? " (" + listed.length + " space(s))" : "")));
+    elevWrap.appendChild(wfNote(
+      "Both are space-level Optional inputs: a count and a power per unit. They are only in the file " +
+      "if someone put them there, so this lists the spaces that carry them and lets you add one. " +
+      "The ruleset warns above 10 units or 10&nbsp;kW per unit and errors above 50 of either."));
+    if(listed.length){
+      const et = wfTable(["Space", fieldLabel("Spc", "ElevCnt"), fieldLabel("Spc", "ElevPwr"),
+        fieldLabel("Spc", "EscalCnt"), fieldLabel("Spc", "EscalPwr"), "Total (kW)"]);
+      for(const spc of listed){
+        const tr = document.createElement('tr');
+        wfCell(tr, spc.name, "font-family:var(--mono);color:var(--text);white-space:nowrap;");
+        wfCell(tr, wfNumberInput(spc, "ElevCnt", drawElev, {step: "1"}));
+        wfCell(tr, wfNumberInput(spc, "ElevPwr", drawElev, {step: "100"}));
+        wfCell(tr, wfNumberInput(spc, "EscalCnt", drawElev, {step: "1"}));
+        wfCell(tr, wfNumberInput(spc, "EscalPwr", drawElev, {step: "100"}));
+        const kw = ((spc.attrs.ElevCnt || 0) * (spc.attrs.ElevPwr || 0) +
+                    (spc.attrs.EscalCnt || 0) * (spc.attrs.EscalPwr || 0)) / 1000;
+        wfCell(tr, fmtNum(kw, 2), "font-family:var(--mono);color:var(--text);text-align:right;");
+        et.__body.appendChild(tr);
+      }
+      elevWrap.appendChild(et);
+    }
+    const add = document.createElement('div');
+    add.style.cssText = "margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;";
+    let addSpc = null;
+    const combo = createWfCombo(null, false, "— space —",
+      () => spaces.filter(s => listed.indexOf(s) === -1).map(s => s.name), () => null,
+      (val) => { addSpc = val; });
+    const ci = combo.querySelector('input');
+    if(ci) ci.style.width = "220px";
+    add.appendChild(combo);
+    const msg = document.createElement('span');
+    msg.style.cssText = "font-size:11px;color:var(--text-dim);";
+    add.appendChild(wfBtn("Add elevator to space", () => {
+      const spc = spaces.find(s => s.name === addSpc);
+      if(!spc){ msg.textContent = "Pick a space first."; return; }
+      setPlainAttr(spc, "ElevCnt", 1);
+      dirtyRecords.add(spc);
+      appliedSteps.add("process-loads");
+      renderWorkflowSidebar(); renderRecords(); updateStatus();
+      drawElev();
+    }));
+    add.appendChild(msg);
+    elevWrap.appendChild(add);
   }
-  html += `</tbody></table>`;
-  if(ltgSystems.length){
-    html += `<div style="margin-top:16px;font-size:11.5px;color:var(--text-dim);">${ltgSystems.length} IntLtgSys record${ltgSystems.length>1?'s':''} in file — click Spaces above to see which reference them.</div>`;
-  }
-  container.innerHTML = html;
+  drawElev();
 }
 
 /* =======================================================================
-   PLACEHOLDER — RENEWABLES
-   Shows PVArray and Batt records.
-   Full implementation (inverter efficiency, battery control) is future work.
+   STEP: RENEWABLES
+   PVArray and Batt are both children of Proj, and both are edited here.
+
+   The field names matter and were previously wrong in this tool's own
+   read-only summary: the DC size is PVArray:DCSysSize (kW), tilt is
+   TiltAngle or TiltPitch depending on TiltInp, azimuth is Az, and battery
+   capacity is Batt:MaxCap (kWh) with Batt:Ctrl for the control strategy.
+   Everything offered below comes from the generated field model, so the
+   names and option sets are CBECC's own.
+
+   Batt:MaxChrgPwr and MaxDschrgPwr appear in real files but are NOT inputs
+   -- BEMBase types them NInp, meaning CBECC derives them. They are shown
+   read-only where present rather than offered as editable.
 ======================================================================= */
-function renderRenewablesPlaceholder(container){
+
+// Where a new Proj-level record goes: after the last one of its own kind if the
+// file already has some, otherwise ahead of the results/curve records that trail
+// every file, which is where CBECC's own files put them.
+const RENEW_TRAILING_TYPES = new Set(["CrvLin", "CrvQuad", "CrvCubic", "CrvDblQuad",
+  "CrvMapSglVar", "CrvMapDblVar", "EUseSummary", "EnergyUse", "Meter", "cseZONE",
+  "ResSCSysRpt", "ZEROCodeResults"]);
+function insertProjChild(rec, sameTypes){
+  let idx = -1;
+  for(let i = doc.records.length - 1; i >= 0; i--){
+    if(sameTypes.indexOf(doc.records[i].type) !== -1){ idx = i + 1; break; }
+  }
+  if(idx === -1){
+    idx = doc.records.findIndex(r => RENEW_TRAILING_TYPES.has(r.type));
+    if(idx === -1) idx = doc.records.length;
+  }
+  doc.records.splice(idx, 0, rec);
+  dirtyRecords.add(rec);
+  return rec;
+}
+function renewUniqueName(base){
+  let n = 1, name = base + " " + n;
+  while(doc.records.some(r => r.name === name)){ n++; name = base + " " + n; }
+  return name;
+}
+
+// One labelled field. Keeps the PV and battery cards reading like the schedule
+// they stand in for, rather than a wall of bare inputs.
+function renewField(rec, prop, onChange, opts){
+  opts = opts || {};
+  const row = document.createElement('div');
+  row.style.cssText = "display:flex;gap:8px;align-items:center;";
+  const lbl = document.createElement('span');
+  lbl.style.cssText = "font-size:11px;color:var(--ink-faint);min-width:" + (opts.labelWidth || "112px") + ";";
+  lbl.textContent = opts.label || fieldLabel(rec.type, prop);
+  lbl.title = fieldTitle(rec.type, prop);
+  row.appendChild(lbl);
+  const meta = fieldMeta(rec.type, prop) || {};
+  if(opts.flag) row.appendChild(wfFlagInput(rec, prop, onChange));
+  else if(meta.enums) row.appendChild(wfEnumInput(rec, prop, onChange, {width: opts.width || "180px"}));
+  else row.appendChild(wfNumberInput(rec, prop, onChange, {step: opts.step, width: opts.width}));
+  return row;
+}
+
+function renderRenewablesForm(container){
   if(!doc){ container.innerHTML = '<div class="warn-line">Load a file first.</div>'; return; }
-  const pvArrays  = doc.records.filter(r => r.type === "PVArray");
+  container.innerHTML = "";
+  const wrap = document.createElement('div');
+  container.appendChild(wrap);
+
+  const notice = wfFieldModelNotice();
+  if(notice) wrap.appendChild(notice);
+
+  const pvArrays = doc.records.filter(r => r.type === "PVArray");
   const batteries = doc.records.filter(r => r.type === "Batt");
-  let html = `<div class="wf-placeholder-note">Placeholder — full renewables input (PV sizing, inverter efficiency, battery control strategy) will be built in a future session.</div>`;
-  if(!pvArrays.length && !batteries.length){
-    html += '<div style="color:var(--text-dim);font-size:12px;">No PVArray or Batt records found in this file.</div>';
-    container.innerHTML = html;
-    return;
+  const redraw = () => renderRenewablesForm(container);
+
+  /* ---- PV -------------------------------------------------------------- */
+  const totalDC = pvArrays.reduce((a, p) => a + (typeof p.attrs.DCSysSize === "number" ? p.attrs.DCSysSize : 0), 0);
+  wrap.appendChild(wfSectionTitle("Photovoltaics — PVArray (" + pvArrays.length + ", " + fmtNum(totalDC, 1) + " kW DC total)"));
+  wrap.appendChild(wfNote(
+    "<code>SpecMthd</code> chooses how much CBECC asks for: <em>Simplified</em> offers Standard or " +
+    "Premium modules, <em>Detailed</em> adds Thin Film. Tilt is entered either in degrees or as a " +
+    "pitch in 12, and only the one <code>TiltInp</code> selects is written. Azimuth is in the same " +
+    "convention as the rest of the model, so 180 is due south. " +
+    "This step does not check the prescriptive PV and battery sizing requirement — that depends on " +
+    "building type and climate zone, and CBECC determines it from its own tables."));
+
+  if(!pvArrays.length){
+    wrap.appendChild(wfNote("No PVArray records in this file."));
   }
-  if(pvArrays.length){
-    html += `<div style="font-family:var(--mono);font-size:10.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--ink-faint);margin:16px 0 8px 0;">PV Arrays (${pvArrays.length})</div>`;
-    html += `<table class="wf-table"><thead><tr><th>Name</th><th>DC Cap (kW)</th><th>Tilt (°)</th><th>Az (°)</th><th>ModuleType</th></tr></thead><tbody>`;
-    for(const pv of pvArrays){
-      const dc = pv.attrs.DCCap != null ? pv.attrs.DCCap : '—';
-      html += `<tr>
-        <td class="wf-name">${pv.name}</td>
-        <td style="font-size:11.5px;">${dc}</td>
-        <td style="font-size:11.5px;color:var(--text-dim);">${pv.attrs.Tilt != null ? pv.attrs.Tilt : '—'}</td>
-        <td style="font-size:11.5px;color:var(--text-dim);">${pv.attrs.Az   != null ? pv.attrs.Az   : '—'}</td>
-        <td style="font-size:11.5px;color:var(--text-dim);">${pv.attrs.ModuleType || '—'}</td>
-      </tr>`;
+  for(const pv of pvArrays){
+    const card = document.createElement('div');
+    card.style.cssText = "border:1px solid var(--border);border-radius:var(--radius-2);background:var(--panel);" +
+      "padding:12px 14px;margin-bottom:10px;";
+    const head = document.createElement('div');
+    head.style.cssText = "display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px;";
+    const nm = document.createElement('div');
+    nm.style.cssText = "font-family:var(--mono);font-size:12px;color:var(--text);";
+    nm.textContent = pv.name;
+    head.appendChild(nm);
+    if(pv.attrs.DCSysSize === undefined){
+      const warn = document.createElement('span');
+      warn.style.cssText = "font-size:10.5px;color:var(--edited);";
+      warn.textContent = "⚠ no DC system size";
+      head.appendChild(warn);
     }
-    html += `</tbody></table>`;
-  }
-  if(batteries.length){
-    html += `<div style="font-family:var(--mono);font-size:10.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--ink-faint);margin:16px 0 8px 0;">Battery Storage (${batteries.length})</div>`;
-    html += `<table class="wf-table"><thead><tr><th>Name</th><th>Cap (kWh)</th><th>Max Chg (kW)</th><th>Max Dischg (kW)</th><th>CtrlMthd</th></tr></thead><tbody>`;
-    for(const b of batteries){
-      html += `<tr>
-        <td class="wf-name">${b.name}</td>
-        <td style="font-size:11.5px;">${b.attrs.Cap         != null ? b.attrs.Cap         : '—'}</td>
-        <td style="font-size:11.5px;color:var(--text-dim);">${b.attrs.MaxChgPwr   != null ? b.attrs.MaxChgPwr   : '—'}</td>
-        <td style="font-size:11.5px;color:var(--text-dim);">${b.attrs.MaxDischgPwr!= null ? b.attrs.MaxDischgPwr: '—'}</td>
-        <td style="font-size:11.5px;color:var(--text-dim);">${b.attrs.CtrlMthd    || '—'}</td>
-      </tr>`;
+    head.appendChild(wfBtn("Delete", () => {
+      doc.records.splice(doc.records.indexOf(pv), 1);
+      dirtyRecords.delete(pv);
+      renderTypes(); renderRecords(); updateStatus(); redraw();
+    }));
+    card.appendChild(head);
+
+    const grid = document.createElement('div');
+    grid.style.cssText = "display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:8px 18px;";
+    grid.appendChild(renewField(pv, "SpecMthd", redraw));
+    grid.appendChild(renewField(pv, "DCSysSize", redraw, {step: "0.1"}));
+    grid.appendChild(renewField(pv, "ModuleType", redraw));
+    grid.appendChild(renewField(pv, "ArrayType", redraw, {width: "200px"}));
+    grid.appendChild(renewField(pv, "Az", redraw, {step: "5"}));
+    grid.appendChild(renewField(pv, "TiltInp", redraw, {width: "120px"}));
+    // Only the tilt field the selected input mode actually uses -- writing both
+    // would leave CBECC with two answers to the same question.
+    if(pv.attrs.TiltInp === "pitch") grid.appendChild(renewField(pv, "TiltPitch", redraw, {step: "0.5"}));
+    else grid.appendChild(renewField(pv, "TiltAngle", redraw, {step: "1"}));
+    grid.appendChild(renewField(pv, "PwrElec", redraw, {width: "200px"}));
+    grid.appendChild(renewField(pv, "SolarAccess", redraw, {step: "1"}));
+    grid.appendChild(renewField(pv, "InverterEff", redraw, {step: "0.5"}));
+    grid.appendChild(renewField(pv, "CalFlexibleInstallOpt", redraw, {width: "120px"}));
+    grid.appendChild(renewField(pv, "GeomSpecMthd", redraw, {width: "220px"}));
+    card.appendChild(grid);
+
+    if(pv.attrs.PVArrayGeomRef !== undefined){
+      card.appendChild(wfNote("Geometry comes from <code>PVArrayGeom</code> record " +
+        "<code>" + pv.attrs.PVArrayGeomRef + "</code>. Azimuth and tilt above are not what CBECC uses " +
+        "while that reference stands."));
     }
-    html += `</tbody></table>`;
+    wrap.appendChild(card);
   }
-  container.innerHTML = html;
+  const pvAdd = document.createElement('div');
+  pvAdd.style.cssText = "margin-bottom:6px;";
+  pvAdd.appendChild(wfBtn("Add PV array", () => {
+    const rec = makeRecord("PVArray", renewUniqueName("Photovoltaic Array"));
+    // Only the enum defaults the ruleset itself declares. Nothing numeric is
+    // invented -- DC size is the user's to enter, and the card flags it until it is.
+    for(const prop of ["SpecMthd", "ModuleType", "ArrayType", "TiltInp", "PwrElec", "GeomSpecMthd"]){
+      const def = fieldEnumDefault(rec, prop);
+      if(def !== null && def !== undefined) setPlainAttr(rec, prop, def);
+    }
+    insertProjChild(rec, ["PVArray"]);
+    appliedSteps.add("renewables");
+    renderWorkflowSidebar(); renderTypes(); renderRecords(); updateStatus(); redraw();
+  }, true));
+  wrap.appendChild(pvAdd);
+
+  /* ---- Battery --------------------------------------------------------- */
+  wrap.appendChild(wfSectionTitle("Battery storage — Batt (" + batteries.length + ")"));
+  wrap.appendChild(wfNote(
+    "The data model allows one battery per project (<code>MaxDefinable: 1</code>). " +
+    "<code>Ctrl</code> is the dispatch strategy; the ruleset offers Basic and Time of Use, and " +
+    "adds Advanced DR Control only in its research mode. Round-trip efficiency replaces the " +
+    "separate charge and discharge efficiencies when <code>AllowBattRoundTripEff</code> is on."));
+  if(batteries.length > 1){
+    wrap.appendChild(wfNote("<strong>" + batteries.length + " Batt records.</strong> The data model " +
+      "allows one; CBECC will object to the rest.", "warn"));
+  }
+  for(const b of batteries){
+    const card = document.createElement('div');
+    card.style.cssText = "border:1px solid var(--border);border-radius:var(--radius-2);background:var(--panel);" +
+      "padding:12px 14px;margin-bottom:10px;";
+    const head = document.createElement('div');
+    head.style.cssText = "display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px;";
+    const nm = document.createElement('div');
+    nm.style.cssText = "font-family:var(--mono);font-size:12px;color:var(--text);";
+    nm.textContent = b.name;
+    head.appendChild(nm);
+    head.appendChild(wfBtn("Delete", () => {
+      doc.records.splice(doc.records.indexOf(b), 1);
+      dirtyRecords.delete(b);
+      renderTypes(); renderRecords(); updateStatus(); redraw();
+    }));
+    card.appendChild(head);
+
+    const grid = document.createElement('div');
+    grid.style.cssText = "display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:8px 18px;";
+    grid.appendChild(renewField(b, "MaxCap", redraw, {step: "0.1"}));
+    grid.appendChild(renewField(b, "Ctrl", redraw, {width: "180px"}));
+    grid.appendChild(renewField(b, "AllowBattRoundTripEff", redraw, {flag: true}));
+    if(b.attrs.AllowBattRoundTripEff){
+      grid.appendChild(renewField(b, "RoundTripEff", redraw, {step: "0.01"}));
+    } else {
+      grid.appendChild(renewField(b, "ChrgEff", redraw, {step: "0.01"}));
+      grid.appendChild(renewField(b, "DschrgEff", redraw, {step: "0.01"}));
+    }
+    grid.appendChild(renewField(b, "SimStandaloneBatt", redraw, {flag: true}));
+    if(b.attrs.SimStandaloneBatt) grid.appendChild(renewField(b, "StandaloneChgStartHr", redraw, {step: "1"}));
+    grid.appendChild(renewField(b, "NumRankedDays", redraw, {step: "1"}));
+    card.appendChild(grid);
+
+    const derived = ["MaxChrgPwr", "MaxDschrgPwr"].filter(p => b.attrs[p] !== undefined);
+    if(derived.length){
+      card.appendChild(wfNote("CBECC-derived, not editable: " +
+        derived.map(p => "<code>" + p + "</code> = " + fmtNum(b.attrs[p], 2) + " kW").join(", ") +
+        ". These are computed from capacity and control, and are left exactly as the file has them."));
+    }
+    wrap.appendChild(card);
+  }
+  if(!batteries.length){
+    const bAdd = document.createElement('div');
+    bAdd.appendChild(wfBtn("Add battery", () => {
+      const rec = makeRecord("Batt", "Battery");
+      const def = fieldEnumDefault(rec, "Ctrl");
+      if(def) setPlainAttr(rec, "Ctrl", def);
+      insertProjChild(rec, ["Batt", "PVArray"]);
+      appliedSteps.add("renewables");
+      renderWorkflowSidebar(); renderTypes(); renderRecords(); updateStatus(); redraw();
+    }, true));
+    wrap.appendChild(bAdd);
+  }
 }
 
-/* =======================================================================
-   PLACEHOLDER — PROCESS LOADS
-   Shows spaces with RecptPwrDens / ProcElecPwrDens / ProcGasPwrDens.
-   Full implementation (equipment schedules, rated power) is future work.
-======================================================================= */
-function renderProcessPlaceholder(container){
-  if(!doc){ container.innerHTML = '<div class="warn-line">Load a file first.</div>'; return; }
-  const spaces = doc.records.filter(r => r.type === "Spc");
-  let html = `<div class="wf-placeholder-note">Placeholder — full process load input (equipment schedules, rated power, diversity factors) will be built in a future session.</div>`;
-  if(!spaces.length){
-    container.innerHTML = html + '<div style="color:var(--text-dim);font-size:12px;">No spaces found.</div>';
-    return;
-  }
-  html += `<table class="wf-table"><thead><tr>
-    <th>Space</th>
-    <th>RecptPwrDens (W/sf)</th>
-    <th>ProcElecPwrDens (W/sf)</th>
-    <th>ProcGasPwrDens (Btu/h·sf)</th>
-  </tr></thead><tbody>`;
-  for(const spc of spaces){
-    const recpt    = spc.attrs.RecptPwrDens;
-    const procElec = spc.attrs.ProcElecPwrDens;
-    const procGas  = spc.attrs.ProcGasPwrDens;
-    const cell = (v) => `<td style="font-size:11.5px;color:${v!=null?'var(--text)':'var(--ink-faint)'};">${v!=null?v:'—'}</td>`;
-    html += `<tr><td class="wf-name">${spc.name}</td>${cell(recpt)}${cell(procElec)}${cell(procGas)}</tr>`;
-  }
-  html += `</tbody></table>`;
-  container.innerHTML = html;
-}
 
 const WORKFLOW_STEPS = [
   {
@@ -7275,47 +9242,84 @@ const WORKFLOW_STEPS = [
       "all of them at once at the top."; },
     renderForm: renderSpcFuncForm,
   },
-  // ── Envelope (optional — toggle in sidebar to enable) ──────────────────
+  // -- Envelope (optional -- toggle in sidebar to enable) -----------------
   {
     id: "review-envelope", group: "envelope",
-    title: "Review envelope",
-    subtitle: "ExtWall / Roof / Win",
+    title: "Envelope",
+    subtitle: "FenCons / ConsAssm / WWR",
     kind: "interactive",
-    description: "Audit envelope surface records: construction assembly assignments (ConsAssmRef), " +
-      "surface type, and area. Flags surfaces missing a construction reference. " +
-      "<em>Full editing (construction assignment, U-values, WWR) is planned for a future session.</em>",
-    renderForm: renderEnvelopePlaceholder,
+    description: "The whole envelope in one place: the glazing library, the opaque assembly library, " +
+      "every surface's assignment, and window-to-wall ratio by orientation. " +
+      "Glazing <code>UFactor</code>, <code>SHGC</code> and <code>VT</code> are edited on the " +
+      "<code>FenCons</code> record &mdash; a window carries no performance of its own, only a " +
+      "<code>FenConsRef</code>. Opaque assemblies have <em>no</em> U-factor field: CBECC computes it " +
+      "from the <code>Mat</code> layer stack, so the layer list is the U-factor, and that is what this " +
+      "step edits. Assignment pickers offer only the constructions the ruleset lets a surface accept " +
+      "(<code>ConsAssm:CompatibleSurfType</code> must match the surface type, and a window may only " +
+      "take a <code>VerticalFenestration</code> construction), with bulk assignment per surface type " +
+      "and a flag on any surface pointing at the wrong kind. Areas and orientations are computed from " +
+      "the surfaces' own polygons rather than the optional <code>Area</code> attribute, which only " +
+      "exists in Simplified-geometry files. Setting a target WWR rescales the window polygons in place " +
+      "about their own centres, holding a window back rather than pushing it past the edge of its wall.",
+    renderForm: renderEnvelopeForm,
   },
-  // ── Lighting (optional — toggle in sidebar to enable) ──────────────────
+  // -- Lighting (optional -- toggle in sidebar to enable) -----------------
   {
     id: "interior-lighting", group: "lighting",
     title: "Interior lighting",
-    subtitle: "LtgPwrDens W/sf",
+    subtitle: "Spc.IntLPDReg W/ft²",
     kind: "interactive",
-    description: "Review interior lighting power density (W/sf) for each space via linked IntLtgSys records. " +
-      "<em>Full editing (fixture types, daylighting controls, schedules) is planned for a future session.</em>",
-    renderForm: renderLightingPlaceholder,
+    get description(){ return "Lighting power density per space, both ways CBECC can take it. " +
+      "A space with no lighting systems of its own gets its power from " +
+      "<code>Spc:IntLPDReg</code> &times; floor area, and that is the box you edit; its default is the " +
+      "space function's Appendix 5.4A value, offered per row and in bulk, read from T24-" +
+      getCodeYear() + "'s own copy of the table. A space that has <code>IntLtgSys</code> children is on " +
+      "the luminaire path instead &mdash; power is the sum of <code>LumCnt</code> &times; " +
+      "<code>Lum:Pwr</code>, its <code>IntLPDReg</code> is greyed out because the ruleset ignores it, " +
+      "and the counts and the luminaire library are editable below. " +
+      "<code>LtgStatus = \"Future\"</code> is flagged: the ruleset then sets the proposed lighting equal " +
+      "to the standard design, so neither number is used as entered. Creating new lighting systems is " +
+      "not offered &mdash; <code>IntLtgSys:AllowType</code> is conditioned on the parent space's " +
+      "function across roughly 600 ruleset branches, and this build does not carry that table."; },
+    renderForm: renderLightingForm,
   },
-  // ── Process loads (optional — toggle in sidebar to enable) ─────────────
+  // -- Process loads (optional -- toggle in sidebar to enable) ------------
   {
     id: "process-loads", group: "process",
-    title: "Process loads",
+    title: "Process + plug loads",
     subtitle: "RecptPwrDens / ProcElec",
     kind: "interactive",
-    description: "Review receptacle and process load densities per space " +
-      "(RecptPwrDens, ProcElecPwrDens, ProcGasPwrDens). " +
-      "<em>Full editing (equipment schedules, rated power, diversity) is planned for a future session.</em>",
-    renderForm: renderProcessPlaceholder,
+    description: "All five internal-load densities on <code>Spc</code>: receptacle, electric equipment, " +
+      "gas equipment, process electrical and process gas &mdash; each with the ruleset's own error and " +
+      "warning band on the box, so a value CBECC would reject shows red and one it would warn about " +
+      "shows amber. Receptacle and gas-equipment densities have Appendix 5.4A defaults, offered per row " +
+      "and in bulk, including the two documented departures from the raw table: a Computer Room's " +
+      "20.001 W/ft², and gas equipment forced to 0 on an all-electric project " +
+      "(<code>Proj:GasType = \"None\"</code>), which is also flagged wherever the file disagrees. " +
+      "Clearing a box removes the field and hands it back to CBECC's default rather than asserting 0. " +
+      "Below that, the heat-gain split (radiant / latent / lost) for whichever categories actually " +
+      "carry a load, and elevator and escalator loads. Refrigeration is deliberately absent: " +
+      "<code>Spc:CommRfrgEPD</code> became NotInput in the 2022.3.0 ruleset and CBECC discards anything " +
+      "written to it, so the 5.4A column is shown for reference only.",
+    renderForm: renderProcessForm,
   },
-  // ── Renewables (optional — toggle in sidebar to enable) ───────────────
+  // -- Renewables (optional -- toggle in sidebar to enable) --------------
   {
     id: "renewables", group: "renewables",
     title: "Renewables",
     subtitle: "PVArray / Batt",
     kind: "interactive",
-    description: "Review photovoltaic arrays (PVArray) and battery storage (Batt) records — DC capacity, tilt, azimuth, module type, and battery control. " +
-      "<em>Full editing (inverter efficiency, export control, battery dispatch strategy) is planned for a future session.</em>",
-    renderForm: renderRenewablesPlaceholder,
+    description: "Photovoltaic arrays and battery storage, created, edited or deleted. PV covers " +
+      "<code>DCSysSize</code>, module type, array type, azimuth, tilt, power electronics, solar access " +
+      "and inverter efficiency; only the tilt field <code>TiltInp</code> selects is written, so CBECC " +
+      "is never left with a pitch and an angle to choose between. Battery covers <code>MaxCap</code>, " +
+      "the <code>Ctrl</code> dispatch strategy, and either round-trip efficiency or the separate charge " +
+      "and discharge efficiencies, depending on <code>AllowBattRoundTripEff</code>. " +
+      "<code>MaxChrgPwr</code> and <code>MaxDschrgPwr</code> appear in real files but are derived by " +
+      "CBECC, not inputs, so they are shown read-only and left exactly as the file has them. " +
+      "The prescriptive PV and battery sizing requirement is not checked here &mdash; it depends on " +
+      "building type and climate zone, which CBECC resolves from its own tables.",
+    renderForm: renderRenewablesForm,
   },
   // ── HVAC & Mechanical ──────────────────────────────────────────────────
   {
@@ -7468,6 +9472,35 @@ function renderWorkflowSidebar(){
             const _anySet = _spaces.some(s => s.attrs.SpcFunc);
             isDone = _spaces.every(s => s.attrs.SpcFunc);
             isStale = !isDone && _anySet;
+          }
+        }
+        break;
+      case "review-envelope":
+        // Every surface pointing at a construction is the checkpoint here -- a
+        // missing ConsAssmRef/FenConsRef is a compliance error, everything else in
+        // the step is a judgement call the tool should not claim to have made.
+        if(doc){
+          const _surf = doc.records.filter(r =>
+            ENV_OPAQUE_TYPES.indexOf(r.type) !== -1 || ENV_FEN_TYPES.indexOf(r.type) !== -1);
+          if(_surf.length > 0){
+            const _wired = _surf.filter(r => r.attrs[envRefProp(r)] !== undefined).length;
+            isDone = _wired === _surf.length;
+            isStale = !isDone && _wired > 0;
+          }
+        }
+        break;
+      case "interior-lighting":
+        // A space is settled once its power is determined one way or the other:
+        // luminaires, or an explicit IntLPDReg. Leaving it to the ruleset default is
+        // legitimate but unreviewed, which is what "stale" means everywhere else here.
+        if(doc){
+          const _spcs = doc.records.filter(r => r.type === "Spc");
+          if(_spcs.length > 0){
+            const _ltg = mapIntLtgSystems();
+            const _set = _spcs.filter(s2 => (_ltg.get(s2) || []).length > 0 ||
+                                            s2.attrs.IntLPDReg !== undefined).length;
+            isDone = _set === _spcs.length;
+            isStale = !isDone && _set > 0;
           }
         }
         break;
@@ -7643,9 +9676,23 @@ renderStepDetail(WORKFLOW_STEPS[0]);
 .vp-entry ul { margin: 5px 0 0; padding-left: 16px; color: var(--ink-muted, #6E737B); line-height: 1.65; }
 </style>
 
-<div id="ver-badge">v1.19.0</div>
+<div id="ver-badge">v1.20.0</div>
 <div id="ver-panel">
   <div class="vp-title">Changelog</div>
+  <div class="vp-entry">
+    <span class="vp-ver">v1.20.0</span><span class="vp-date">2026-08-19</span>
+    <ul>
+      <li>The four placeholder steps are real editors now. <strong>Envelope</strong> covers the glazing library (<code>FenCons</code> U-factor, SHGC, VT and the certification/framing enums), the opaque assembly library (layer stacks and cool-roof properties), every surface&rsquo;s construction assignment with bulk assignment per surface type, and window-to-wall ratio by orientation with a target that rescales the window polygons in place</li>
+      <li><strong>Interior lighting</strong> edits <code>Spc:IntLPDReg</code> per space with the Appendix 5.4A default offered per row and in bulk, and edits the luminaire path (<code>LumCnt</code>, and the <code>Lum</code> library&rsquo;s power and fixture/lamp type) where a space has lighting systems of its own. A space on the luminaire path has its density greyed out, because the ruleset computes power from the luminaires and ignores it</li>
+      <li><strong>Process + plug loads</strong> edits all five densities on <code>Spc</code>, each with the ruleset&rsquo;s own error and warning band on the box, plus the heat-gain split for whichever categories carry a load and elevator/escalator loads. <strong>Renewables</strong> creates, edits and deletes <code>PVArray</code> and <code>Batt</code> records</li>
+      <li>A second <strong>generated</strong> table joins the system enums: a field model of datatypes, units, option sets, validation bands and input classes, read from each code year&rsquo;s own Input Data Model, and the Appendix 5.4A internal-load defaults read from each year&rsquo;s own copy of that table. Nothing in these four steps is hand-transcribed &mdash; not the option sets, not the bands, not which construction a surface may accept. <code>tools/extract_field_model.js --check</code> and <code>tools/extract_load_defaults.js --check</code> fail if either drifts</li>
+      <li>The option sets narrow the way the ruleset narrows them, rather than offering the union: <code>FenCons:FenProdType</code> follows <code>FenType</code>, <code>CertificationMthd</code> follows <code>AssmContext</code> <em>and</em> <code>FenType</code>, and PV module types widen only under the Detailed specification method. Real cycle differences are respected &mdash; <code>Batt:Ctrl</code> offers Advanced DR Control under T24-2022 and not under T24-2025, three Appendix 5.4A lighting-power rows differ between the two cycles, and a field that is not an input in the file&rsquo;s cycle says so instead of rendering an empty picker</li>
+      <li><strong>Corrected:</strong> the old renewables summary read fields that do not exist. There is no <code>PVArray:DCCap</code>, <code>Tilt</code> or <code>ModuleType</code>-under-<code>Simplified</code>-only, and no <code>Batt:Cap</code>, <code>MaxChgPwr</code>, <code>MaxDischgPwr</code> or <code>CtrlMthd</code>. The real inputs are <code>DCSysSize</code>, <code>Az</code>, <code>TiltInp</code> with <code>TiltAngle</code>/<code>TiltPitch</code>, and <code>MaxCap</code>/<code>Ctrl</code>. Every PV and battery figure the old view displayed was blank for that reason</li>
+      <li><strong>Fixed:</strong> every opening after the first on a surface was silently dropped. The hierarchy derived an opening&rsquo;s host from the last geometry owner, which is the previous <em>opening</em> once a wall has more than one &mdash; so a three-window wall reported one window in the 3D view and in every area total. Skylights were worse: <code>Skylt</code> matched neither branch, so a skylight&rsquo;s polygon overwrote its host roof&rsquo;s own coordinates and the roof came out skylight-sized</li>
+      <li>Envelope areas and orientations come from the surfaces&rsquo; own polygons via Newell&rsquo;s method, not the optional <code>Area</code> attribute, which only exists in Simplified-geometry files. A vertical wall has no plan-view area at all, which is why the floor-area shoelace could not be reused</li>
+      <li>The window rescale never pushes a window past the edge of its host wall: the factor is reduced for that window and the result says the orientation landed short. It is also honest about what it does not do &mdash; opaque assemblies have no U-factor field (CBECC computes it from the layer stack), refrigeration density has been NotInput since the 2022.3.0 ruleset, and the prescriptive PV/battery sizing requirement is not checked</li>
+    </ul>
+  </div>
   <div class="vp-entry">
     <span class="vp-ver">v1.19.0</span><span class="vp-date">2026-08-19</span>
     <ul>

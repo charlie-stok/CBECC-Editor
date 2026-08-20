@@ -4,8 +4,19 @@
     {
       "name": "CBECC Editor",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["server.js"],
+      "runtimeArgs": [
+        "server.js"
+      ],
       "port": 3000
+    },
+    {
+      "name": "CBECC Editor (standalone)",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "tools/static_server.js",
+        "3100"
+      ],
+      "port": 3100
     }
   ]
 }

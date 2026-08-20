@@ -66,15 +66,54 @@ any time.
 
 ### Optional step groups (collapsed by default)
 
-These groups appear in the sidebar but are collapsed until toggled. They are read-only audits
-at present — full editing is planned for future sessions.
+These groups appear in the sidebar but are collapsed until toggled. All four are full editors.
 
-| Group | Subtitle | Current state |
+| Group | Subtitle | What it edits |
 |-------|----------|--------------|
-| **Envelope** | ExtWall / Roof / Win | Audit view: flags surfaces missing `ConsAssmRef`. Editing construction assignments, U-values, and WWR is not yet implemented. |
-| **Lighting** | LtgPwrDens W/sf | Audit view: shows lighting power density via `IntLtgSys` records. Fixture types, daylighting controls, and schedules are not yet editable. |
-| **Process loads** | RecptPwrDens / ProcElec | Audit view: shows `RecptPwrDens`, `ProcElecPwrDens`, `ProcGasPwrDens` per space. Equipment schedules and rated power are not yet editable. |
-| **Renewables** | PVArray / Batt | Audit view: shows PV array and battery storage records. Inverter efficiency, export control, and dispatch strategy are not yet editable. |
+| **Envelope** | FenCons / ConsAssm / WWR | Glazing library (`UFactor`, `SHGC`, `VT`, and the certification/framing enums on `FenCons`); opaque assembly layer stacks and cool-roof properties; every surface’s `ConsAssmRef` / `FenConsRef`, with bulk assignment per surface type and a flag on any surface pointing at the wrong kind of construction; window-to-wall ratio by orientation, with a target that rescales the window polygons in place. |
+| **Lighting** | Spc.IntLPDReg W/ft² | Lighting power density per space, with the Appendix 5.4A default offered per row and in bulk; `IntLPDNonReg` and `LtgStatus`; and, for spaces that have `IntLtgSys` children, the luminaire counts and the `Lum` library (power, fixture type, lamp type). |
+| **Process loads** | RecptPwrDens / ProcElec | All five internal-load densities on `Spc`, each with the ruleset’s own error and warning bands; Appendix 5.4A defaults for receptacle and gas equipment; the radiant / latent / lost heat-gain split; elevator and escalator loads. |
+| **Renewables** | PVArray / Batt | Create, edit and delete `PVArray` (`DCSysSize`, module and array type, azimuth, tilt, power electronics, solar access, inverter efficiency) and `Batt` (`MaxCap`, `Ctrl`, charge/discharge or round-trip efficiency). |
+
+### What these steps deliberately do not do
+
+- **Opaque assemblies have no U-factor field.** CBECC computes the assembly U-factor from the
+  `Mat` layer stack, so the layer list is the U-factor. Materials can be swapped, added and
+  removed from the `Mat` records already in the file; adding a material that is not in the file
+  needs CBECC’s own material library, which this tool does not carry.
+- **No new lighting systems.** `IntLtgSys:AllowType` is conditioned on the parent space’s
+  function across roughly 600 ruleset branches. Existing systems and luminaires are editable;
+  creating one would mean guessing which allowances a space may claim.
+- **Refrigeration density is reference-only.** `Spc:CommRfrgEPD` became NotInput in the 2022.3.0
+  ruleset and CBECC discards anything written to it.
+- **The prescriptive PV and battery sizing requirement is not checked.** It depends on building
+  type and climate zone, which CBECC resolves from its own tables.
+- **Rescaling a WWR rewrites geometry.** Window polygons are scaled about their own centres,
+  which is in-plane, and a window is never pushed past the edge of its host wall — so an
+  orientation can land short of the target, and the result says when it did. Re-run CBECC’s own
+  geometry checks afterwards.
+
+### Where the numbers come from
+
+Nothing in these steps is transcribed by hand. Two generated tables back them, both read from
+each code year’s **own** CBECC install:
+
+| Table | Source | Regenerate / verify |
+|-------|--------|--------------------|
+| `FIELD_MODEL` | `T24*_ - Input Data Model.txt` — datatypes, units, enum option sets (branch by branch, not merged), validation bands, input classes | `node tools/extract_field_model.js [--check]` |
+| `LOAD_DEFAULTS_54A` | `App5-4A_SpaceBySpace-T24N_<year>.csv` — interior LPD, receptacle, gas equipment, refrigeration | `node tools/extract_load_defaults.js [--check]` |
+
+`--check` exits non-zero if the editor has drifted from the ruleset; the load-defaults check also
+cross-checks the columns it shares with the occupancy step’s tables. Both run as part of
+`node test_envelope_loads.js`.
+
+Code-year handling follows the same rule as the rest of the tool: **option sets** may fall back to
+another cycle, with a visible notice naming both years, while **numeric defaults never do** — a
+cycle with no published table gets no defaults rather than another cycle’s numbers. The
+differences are real: `Batt:Ctrl` offers Advanced DR Control under T24-2022 and not under
+T24-2025, three Appendix 5.4A lighting-power rows differ between the cycles, and `Ceiling:Status`
+is an input in 2025 and absent in 2022. A field that is not an input in the file’s cycle says so
+rather than rendering an empty picker.
 
 ---
 
